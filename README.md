@@ -1,7 +1,20 @@
-# animal2go2
+# dog2go2
 
-Dog mocap → Unitree Go2 kinematic retargeting (Milestone 1). See `brief_claude.md`
+Dog motion → Unitree Go2 kinematic retargeting (Milestone 1). See `brief_claude.md`
 for the full plan. Status: **all phases (0–5) done.**
+
+> The uv project is still named `animal2go2` in `pyproject.toml`; only the
+> checkout was renamed. Renaming the project would rewrite `uv.lock`, so it is
+> left alone deliberately.
+
+There are two ways in, and they meet at one npz contract:
+
+    BVH mocap ── retarget/parse_mocap.py ──┐
+                                           ├── processed/<clip>.npz ── retarget/retarget.py ── motions/<clip>.pkl
+    video ───── capture/ (5 stages) ───────┘
+
+[`capture/`](#capture--from-video-instead-of-mocap) is the video path, migrated
+in from the AniMer repo — see [what changed](#what-changed-in-the-migration).
 
 **Milestone 2** (RL tracking policy in Isaac Lab, `brief_claude_milestone2.md`)
 lives in [`a2g2_tracking/`](a2g2_tracking/README.md) — status, measured
@@ -46,22 +59,28 @@ export DLC_MODELS="$A2G2_SSD/models/dlc"
 
 `data/` is a symlink into `$A2G2_SSD/data/animal2go2`.
 
-### The v2k perception environment
+### The capture environment
 
-The video→keypoints stack (`v2k/`) needs torch + DeepLabCut, which conflict
-with this project's mujoco env, so it gets its own venv on the SSD:
+`capture/` needs torch + detectron2 + transformers, which conflict with this
+project's mujoco env, so it runs on a separate interpreter. Point `PY_CAPTURE`
+at it, and tell it where AniMer and its checkpoint live:
 
 ```bash
-uv venv --python 3.11 "$A2G2_SSD/venvs/env_v2k"
-uv pip install --python "$A2G2_SSD/venvs/env_v2k/bin/python" \
-  --index-url https://download.pytorch.org/whl/cu124 torch torchvision
-uv pip install --python "$A2G2_SSD/venvs/env_v2k/bin/python" \
-  "transformers>=4.51" "numpy<2.3" scipy opencv-python-headless \
-  "imageio[ffmpeg]" matplotlib tqdm pytest safetensors "deeplabcut>=3.0"
+export PY_CAPTURE=$HOME/anaconda3/envs/animal/bin/python
+export ANIMER_ROOT=$HOME/py_workspace/AniMer
+export ANIMER_CKPT=/media/SHARED_DATA/postcapitalistrobots/animer/checkpoints/gdrive_AniMer/checkpoints/checkpoint.ckpt
 ```
 
-Anything that runs a model uses that interpreter; the pure-numpy parts
-(`v2k.seam`, `v2k.eval2d`, the tests) run under the project's own `uv run`.
+That env is torch 2.5.1+cu121, numpy 2.2.6, timm 1.0.28, transformers ≥4.45,
+detectron2, pytorch3d, opencv, matplotlib. `HF_HOME` is already exported above
+and the Depth Anything V2 weights are cached there.
+
+The dividing line is the package boundary: **`capture/` is torch, everything
+else in the repo is uv.** The two exchange npz files and nothing else. The
+pure-numpy half of `capture` (everything except stages 1–2) imports fine under
+`uv run` too, and `tests/test_capture.py` exercises it there — that is a
+standing check that the torch dependency stays confined to the function bodies
+that need it.
 
 Download the dog mocap dataset (AI4Animation, SIGGRAPH 2018 —
 **CC BY-NC 4.0, not redistributed here**):
@@ -167,7 +186,227 @@ One `motions/<clip>.pkl` + `media/go2_<clip>.mp4` per source clip, plus the
 summary table. `--skip-existing` resumes an interrupted run. Failures don't
 abort the batch; they're listed at the end (nonzero exit).
 
-### Notes / things that broke (article fodder)
+## Capture — from video instead of mocap
+
+Turns a monocular video of an animal into the same npz the BVH path produces,
+so everything from `retarget/retarget.py` onward is unchanged. Migrated from
+`video2go2/` in the AniMer repo; see [what changed](#what-changed-in-the-migration).
+
+    video ─1─ AniMer SMAL pose ─2─ ground plane (metric depth)
+                    │                      │
+                    └──3── contacts ───4── world placement (BA)
+                                                  │
+                                        5── processed/<clip>.npz
+
+| # | stage | what it decides |
+|---|---|---|
+| 1 | `capture.animer_infer` | SMAL pose/shape per frame; shape frozen to the clip median |
+| 2 | `capture.depth_calib` | plane normal + camera height, from metric depth |
+| 3 | `capture.contacts_kine` | which paws are planted, per frame |
+| 4 | `capture.world_place_ba` | clip-wide trajectory + metric scale (bundle adjustment) |
+| 5 | `capture.parse_video` | the npz contract |
+
+```bash
+capture/run_default.sh media/dog_3.mp4 dog_3          # optional [trim_start,trim_end]
+```
+
+That runs all five stages, then retargets and renders, ending at
+`motions/dog_3.pkl` and a side-by-side `media/sbs_dog_3.mp4`. Each stage is
+skipped if its output exists, so a re-run resumes — to genuinely redo a clip,
+delete its artifacts first, or you are measuring the old run. Every stage is
+also a CLI of its own: `$PY_CAPTURE -m capture.<stage> --help`.
+
+Artifacts land under `$A2G2_WORK` (default `$A2G2_SSD/work/capture`), not in
+the working tree.
+
+### The one input nothing can measure: focal length
+
+Stage 2 needs a focal length to back-project depth. If no
+`<clip>_seed.json` exists the script writes one assuming
+`focal = FOCAL_RATIO × frame width`, and says so. The three clips with a real
+four-point calibration give ratios 0.791 / 0.825 / 0.858, so the default is
+their median, **0.825**. Override when you know better:
+
+```bash
+FOCAL_RATIO=0.86 capture/run_default.sh media/clip.mp4 clip
+```
+
+This is an assumption, not a measurement, and it propagates into every metre:
+`tests/test_capture.py` pins the sensitivity at 11–13% of camera height for a
+20–30% focal error. The `scale_mismatch` residual reveals it; `ortho` does
+**not** — with the in-plane axes `depth_calib` builds, `ortho` is structurally
+zero whatever the focal is.
+
+### What "good" looks like
+
+Verified end to end on `dog_3` (121 frames @ 24 fps) from a wiped state on
+2026-08-05, in the AniMer repo, before the migration:
+
+    ground plane      normal [-0.008 -0.996 -0.083], camera height 0.580 m
+                      spread over 8 frames 0.550-0.609, round-trip error ~1e-15
+    contacts          duty 0.77, zero-feet frames 1.7%
+    placement         scale 0.895 m/unit -> shoulder 43.5 cm
+                      path 2.30 m over 5.0 s, root z median 0.397 m
+                      stance foot skate median 0.020 m
+    contract          PASSED, toe z range -0.043 .. 0.104 m
+    retarget          scale 0.615, clamp rate 0.28%, skate 0.037 -> 0.001 m/s
+
+Clamp rate under 3% (it warns above), stance skate near zero after
+post-processing, `contract checks passed`, plane round-trip ~1e-15. A toe-z
+range outside (−0.15, 0.4) fails the contract and means the ground plane is
+wrong. **Beware:** clamp rate and skate are both minimised by a *motionless*
+robot, so neither on its own proves the motion is right. Watch the
+side-by-side.
+
+### Known limitations
+
+**Generated video breaks the metric scale.** Depth models have no real geometry
+to measure in AI-generated footage. Against four-point clicked calibrations:
+
+| clip | clicked height | Depth Anything V2 | ZoeDepth (previous) |
+|---|---|---|---|
+| dog_1 (real) | 1.102 m | −4.6%, normal 1.0° | +18%, 5.2° |
+| cat_1 (real) | 1.090 m | −9.3%, normal 2.7° | +14%, 2.3° |
+| dog_2 (Veo)  | 1.143 m | −54.4%, normal 1.8° | −22%, 3.9° |
+
+A biological-plausibility rejection test on the recovered plane is the intended
+guard and **is not implemented**. Useful signal meanwhile: two independent
+depth models disagreeing wildly is evidence of generated video. On the real
+clips the two agree within ~25%; on dog_2 they differ by 71%, and on **dog_3 by
+46%** (0.847 vs 0.580 m) — so treat dog_3's absolute metres as suspect, its
+fitted 43.5 cm shoulder being short for a golden retriever (~55–60 cm).
+
+**Stale calibrations are silently reused.** Stage 2 skips when the clip's
+`_depth.json` exists. The script prints which depth model produced it and warns
+on a mismatch, but will not overwrite it — delete the file to regenerate.
+
+**Why ZoeDepth was replaced.** Unmaintained, and its BEiT-L checkpoint only
+loads under `timm ≤0.6.x`; pinning that broke DeepLabCut, which needs
+`timm.layers` (added in 0.9). Depth Anything V2 runs through `transformers`,
+which carries its own DINOv2 and needs no `timm` at all — so the conflict is
+deleted rather than worked around. It is also more accurate on real footage.
+
+### Optional: the DeepLabCut quality check
+
+Not part of the pipeline — nothing downstream reads it. It answers one
+question, *is the mesh actually on the animal?*, by comparing an independent 2D
+detector against the mesh's own paw projection. It needs its own environment:
+DLC pins `numpy<2` and the capture env is on numpy 2.x, so the two can never be
+merged.
+
+```bash
+PYTHONNOUSERSITE=1 PYTHONPATH=. $PY_DLC -m capture.paw_detect_dlc \
+  --video media/dog_3.mp4 --mesh $A2G2_WORK/dog_3_animer.npz \
+  --out $A2G2_WORK/dog_3_dlc.npz --dest $A2G2_WORK/dog_3_dlc_raw
+```
+
+Expected on dog_3: 39 keypoints, all four paws assigned geometrically at
+4.2–6.4 px median distance, mesh agreement median 5.7 px / p90 13.0 px,
+coverage 90.1%. Agreement above ~15 px median means the mesh is drifting off
+the animal and the placement will inherit that.
+
+### Traps in the capture path
+
+These cost real debugging time and are not visible in the code. They lived in
+the AniMer repo's `STATUS.md`, which did not migrate.
+
+- **The stages disagree about `PYTHONNOUSERSITE`, so there is no single right
+  setting.** Stage 2 *requires* it: `~/.local` holds a broken `soundfile` that
+  `transformers` imports, and without the guard you get
+  `ModuleNotFoundError: _cffi_backend` surfacing as "Could not import module
+  'AutoImageProcessor'". Stages 1, 3 and 8 require the *opposite*: they reach
+  `amr/models/__init__.py`, whose chain hits `einops`, which is installed only
+  in `~/.local` and not in the conda env. `run_default.sh` therefore has two
+  runners; do not collapse them into one.
+- **The retargeter names its output from the npz `source` FIELD, not the
+  filename.** Feeding it an experiment npz with `source=dog_2` silently
+  overwrites `motions/dog_2.pkl`. `run_default.sh` passes `--source $CLIP`;
+  for any experimental branch pass `--source <name>_x`.
+- **`cam_t` pairs with the RAW FK frame, not the root-centred one.** Adding it
+  to root-centred vertices puts the animal in the wrong place, plausibly enough
+  that it looks like a scale bug.
+- **Scale must never be a least-squares variable.** Errors-in-variables
+  attenuation shrinks it 8–25%. `world_place_ba` solves it outside the LS, on
+  purpose; `--size-prior 0` is the default because an ablation showed the
+  biological prior carried 6–18% of the weight while every sigma in it was
+  hand-asserted.
+- **`cv2.CAP_PROP_FPS` lies.** Use `ffprobe`; `animer_infer` does, and prints a
+  note when the two disagree.
+- **AniMer's `focal_full` is an assumed 5000 px** and must never be used
+  geometrically. The geometric focal is the one in the calibration json.
+- **The MJCF declares legs FL FR RL RR, not the canonical FR FL RR RL.** Never
+  block-copy dof vectors between the two — this is the same trap Phase 0 and
+  Phase 2 above each caught independently.
+
+## What changed in the migration
+
+`video2go2/` in the AniMer repo became `capture/` here. The stage logic — all
+the numerics — is byte-for-byte unchanged; what changed is everything around it.
+
+**Named `capture/`, not `video2go2/`.** Inside a repo already called dog2go2, a
+directory named video2go2 that only does half the job reads as the whole
+pipeline. `capture/` says what it is: the stage that produces motion, parallel
+to `retarget/` and `viz/`, and the counterpart of `retarget/parse_mocap.py`.
+
+**It is a package now.** Stages run as `python -m capture.<stage>` with
+absolute `from capture.x import y` imports. Seven `sys.path.insert(__file__.parent)`
+hacks are gone; scripts no longer depend on being invoked by path.
+
+**Machine-specific paths moved into `capture/paths.py`.** Nothing under
+`capture/` contains a home directory any more. Defaults derive from `$A2G2_SSD`,
+matching the convention the rest of this repo already used, and every one is
+overridable: `ANIMER_ROOT`, `ANIMER_CKPT`, `HF_HOME`, `A2G2_WORK`, `A2G2_CALIB`,
+`PY_CAPTURE`. A missing checkpoint now fails immediately with the variable to
+set, instead of surfacing as an unpickling error minutes into a run.
+
+**AniMer is not vendored.** `ANIMER_ROOT` points at a checkout of it; stage 1
+puts that on `sys.path` to import `amr.*`, and stage 3 reads its SMAL files.
+Copying an 8.35 GB checkpoint and a whole model repo into this tree to run one
+stage would not have been a migration. Stage 1 still has to `chdir` there —
+AniMer's hydra config stores `SMAL.MODEL_PATH` relative to its own root — so
+the stage now resolves `--video`/`--out`/`--debug-frames` to absolute paths
+first; relative ones used to be silently reinterpreted against the AniMer root.
+
+**`run_default.sh` goes all the way to the video.** It used to stop at the npz
+and print a `cd ../animal2go2` instruction to run by hand. Both halves live
+here now, so stages 6–8 (retarget, Go2 render, side-by-side) are part of the
+script. It still switches interpreters between them — that boundary is real.
+
+**Four things were deliberately left behind:**
+
+- `calibrate_ground.py` — the interactive four-point clicked calibration that
+  `depth_calib` replaced. Only its 6-line `to_ground` was still reachable; that
+  now lives in `capture/contacts_ground.py`.
+- `pose_refine_dlc.py` — opt-in pose refinement. Nothing creates the input file
+  it needs, and the one time it ran on dog_3 it produced 39 m of travel in 5 s,
+  1.97 m of foot skate and a violated contract, against 2.30 m and 0.02 m
+  unrefined. It is dead code that is harmful when live. Its conditional block
+  is gone from `run_default.sh`.
+- The synthetic harness (`synth_harness.py`, `synth_eval.py`) and the
+  exploratory scripts (`paw_track.py`, `paw_smoke_test.py`, `assess_contacts.py`,
+  `check_phaseb.py`, `viz_skeleton.py`, `viz_mesh_overlay.py`) — measurement
+  scaffolding for decisions already made and recorded.
+- The design docs (`brief_claude.md`, `PLAN.md`, `STATUS.md`, `GUIDELINES.md`).
+  Docstrings still cite them by name as provenance; the findings that still
+  bind the code are restated above.
+
+**Cleanup that came with it.** `v2k/` was already deleted in the working tree
+but its three test modules remained, and they broke collection of the *whole*
+suite — so 35 passing tests were invisible. Removed. `conftest.py` now puts the
+repo root on `sys.path`, which is what the per-file boilerplate in
+`tests/test_ik.py` was doing by hand.
+
+**Verification status.** The suite is green at 38 tests: the 35 that already
+existed, plus `tests/test_capture.py` covering the ground-plane round trip, the
+focal-length sensitivity, the horizon mask and the npz contract validator. All
+five stage CLIs load under both interpreters. The pipeline has **not** been run
+end to end since the migration — the dog_3 numbers above are from the AniMer
+repo. Re-running one clip is the outstanding check.
+
+## Notes / things that broke (article fodder)
+
+These are from the mocap path (phases 0–5); the video path's equivalents are
+under [traps in the capture path](#traps-in-the-capture-path).
 
 - **Root OFFSET is a trap.** Standard BVH forward kinematics adds the root
   joint's `OFFSET` to its position channels. In this dataset the position
