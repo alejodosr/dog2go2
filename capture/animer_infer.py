@@ -13,9 +13,9 @@ npz:
     $PY_CAPTURE -m capture.animer_infer \
         --video media/dog_1.mov --out <outdir>/dog_1_animer.npz
 
-AniMer itself is not vendored here — `--animer-repo` points at a checkout of
-it ($ANIMER_ROOT), which this stage puts on sys.path to import `amr.*`.
-Everything downstream of it is pure numpy/scipy and needs no GPU.
+AniMer's `amr` package is vendored at the repo root, so no checkout of it is
+needed; only the checkpoint ($ANIMER_CKPT) and `data/smal/` stay external.
+Everything downstream of this stage is pure numpy/scipy and needs no GPU.
 
 Two things happen to the raw AniMer output here, both from brief §4.1:
 
@@ -183,9 +183,6 @@ def main():
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--video", required=True)
     p.add_argument("--out", required=True, help="intermediate npz path")
-    p.add_argument("--animer-repo", default=paths.ANIMER_ROOT,
-                   help="AniMer checkout, for amr.* and the SMAL files "
-                        "(default $ANIMER_ROOT)")
     p.add_argument("--checkpoint", default=paths.ANIMER_CKPT,
                    help="the 8.35 GB vith checkpoint (default $ANIMER_CKPT); "
                         "the 2.7 GB one declares BACKBONE.TYPE=vit and the "
@@ -206,17 +203,19 @@ def main():
     p.add_argument("--debug-every", type=int, default=60)
     args = p.parse_args()
 
-    repo = paths.resolve(args.animer_repo, "AniMer checkout (--animer-repo)")
     paths.resolve(args.checkpoint, "AniMer checkpoint (--checkpoint)")
+    paths.resolve(paths.SMAL_MODEL, "SMAL model file (data/smal/)")
     # chdir below would reinterpret any relative path the caller gave us.
     args.video = str(Path(args.video).resolve())
     args.out = str(Path(args.out).resolve())
     if args.debug_frames:
         args.debug_frames = str(Path(args.debug_frames).resolve())
 
-    sys.path.insert(0, str(repo))
-    # The hydra config stores SMAL.MODEL_PATH as a path relative to the repo root.
-    os.chdir(repo)
+    # The checkpoint's hydra config stores SMAL.MODEL_PATH as "data/smal/..."
+    # relative to the working directory, so the loader only finds it from the
+    # repo root. run_default.sh already cds here; this makes the stage work
+    # when invoked from anywhere else too.
+    os.chdir(paths.REPO_ROOT)
     os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
 
     import cv2
@@ -228,8 +227,7 @@ def main():
     from amr.datasets.vitdet_dataset import ViTDetDataset
     from amr.models.smal_warapper import keypoint_vertices_idx
 
-    sys.path.insert(0, str(repo))
-    from demo_video import build_detector, detect_animals
+    from capture.detector import build_detector, detect_animals
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"loading AniMer from {args.checkpoint}", flush=True)

@@ -1,33 +1,37 @@
 """Every machine-specific path the capture stack needs, in one place.
 
-The pipeline depends on two things that are far too big to live in the working
-tree: a checkout of AniMer (for its `amr` package and the SMAL model files) and
-an 8.35 GB checkpoint. Both are located through environment variables so that
-nothing under `capture/` contains a home directory.
+AniMer's `amr` package is vendored at the repo root, so no checkout of it is
+needed. What cannot live in the working tree is the 8.35 GB checkpoint and the
+34 MB of SMAL model files; both are located through environment variables so
+that nothing under `capture/` contains a home directory.
 
 Following the convention the rest of this repo already uses, bulk storage sits
-under `$A2G2_SSD`, and the defaults here are derived from it. Set the variables
-in `~/.bashrc` alongside the ones the README documents::
+under `$A2G2_SSD`, and the defaults here derive from it. Set these in
+`~/.bashrc` alongside the ones the README documents::
 
     export A2G2_SSD=/media/SHARED_DATA/postcapitalistrobots/a2g2
-    export ANIMER_ROOT=$HOME/py_workspace/AniMer
     export ANIMER_CKPT=$A2G2_SSD/models/animer/checkpoint.ckpt
 
 `resolve()` is deliberately not called at import time: the modules that only
 need numpy must stay importable (and testable) on a machine that has neither
-AniMer nor the checkpoint.
+the checkpoint nor a GPU.
 """
 import os
 from pathlib import Path
+
+#: This repository. The checkpoint's hydra config stores `SMAL.MODEL_PATH` as
+#: a path relative to the working directory, so stage 1 chdirs here.
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 #: Bulk storage root. Everything heavy — weights, caches, artifacts — hangs off
 #: this, so a different machine only has to redefine one variable.
 SSD = Path(os.environ.get("A2G2_SSD", "/media/SHARED_DATA/postcapitalistrobots/a2g2"))
 
-#: Checkout of https://github.com/luoxue-star/AniMer. Stage 1 imports `amr.*`
-#: and `demo_video` from it, and stage 3 reads `data/smal/*.pkl` under it.
-ANIMER_ROOT = Path(os.environ.get("ANIMER_ROOT",
-                                  Path.home() / "py_workspace" / "AniMer"))
+#: The SMAL model files (~34 MB), reached as `data/smal/` relative to REPO_ROOT
+#: because that is the literal string inside the checkpoint's hydra config.
+#: `data/` is a symlink into $A2G2_SSD, matching the mocap data's convention.
+SMAL_DIR = REPO_ROOT / "data" / "smal"
+SMAL_MODEL = SMAL_DIR / "my_smpl_00781_4_all.pkl"
 
 #: The 8.35 GB vith checkpoint. The 2.7 GB one under `checkpoints/AniMer/`
 #: declares `BACKBONE.TYPE=vit`, which AniMer's own loader rejects.

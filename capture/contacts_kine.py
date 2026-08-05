@@ -65,8 +65,6 @@ def main():
                    help="Hz low-pass before differentiating")
     p.add_argument("--refine-paws", action="store_true", default=True)
     p.add_argument("--no-refine-paws", dest="refine_paws", action="store_false")
-    p.add_argument("--animer-repo", default=paths.ANIMER_ROOT,
-                   help="AniMer checkout, for the SMAL files (default $ANIMER_ROOT)")
     p.add_argument("--plot", default=None)
     args = p.parse_args()
 
@@ -116,7 +114,7 @@ def main():
     # ---- floor measurements for the placement stage (compat contract) -----
     paw_uv = paw_uv_raw
     if args.refine_paws:
-        paw_uv = refine_paw_pixels(b, R_cw, args.animer_repo,
+        paw_uv = refine_paw_pixels(b, R_cw,
                                    float(b["focal_full"]), W, H_)
     Hm = np.array(cal["H"])
     ground, ok = ground_positions(Hm, paw_uv)

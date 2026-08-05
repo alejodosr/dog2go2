@@ -25,7 +25,6 @@ Guards this needs that the pixel version did not:
 from pathlib import Path
 import argparse
 import json
-import sys
 
 import numpy as np
 
@@ -59,7 +58,7 @@ def ground_positions(H, uv, max_range=60.0):
     return g.reshape(np.asarray(uv).shape), ok.reshape(np.asarray(uv).shape[:-1])
 
 
-def refine_paw_pixels(infer_npz, R_cw, repo, focal_full, W, H):
+def refine_paw_pixels(infer_npz, R_cw, focal_full, W, H):
     """Re-derive the paw pixel as the BOTTOM of the foot, not the middle of it.
 
     The landmark used elsewhere is the centroid of a SMAL vertex group, which
@@ -76,10 +75,7 @@ def refine_paw_pixels(infer_npz, R_cw, repo, focal_full, W, H):
     """
     import pickle
     import torch
-    repo = paths.resolve(repo, "AniMer checkout (--animer-repo)")
-    smal_pkl = paths.resolve(Path(repo) / "data/smal/my_smpl_00781_4_all.pkl",
-                             "SMAL model file, inside the AniMer checkout")
-    sys.path.insert(0, str(repo))
+    smal_pkl = paths.resolve(paths.SMAL_MODEL, "SMAL model file (data/smal/)")
     from amr.models.smal_warapper import SMALLayer
 
     b = infer_npz
@@ -274,8 +270,6 @@ def main():
                         "lands (distance/camera-height) times further away -- "
                         "9-15 cm on dog_2. Needs torch.")
     p.add_argument("--no-refine-paws", dest="refine_paws", action="store_false")
-    p.add_argument("--animer-repo", default=paths.ANIMER_ROOT,
-                   help="AniMer checkout, for the SMAL files (default $ANIMER_ROOT)")
     p.add_argument("--plot", default=None)
     p.add_argument("--segments", default="0,174,330,660,807",
                    help="frame boundaries for the per-segment report")
@@ -298,7 +292,7 @@ def main():
         R_cw, _, _, _ = camera_to_world(np.array(cal["H_inv"]),
                                         float(cal["focal_px"]), W / 2.0, H_ / 2.0)
         moved = paw_uv.copy()
-        paw_uv = refine_paw_pixels(b, R_cw, args.animer_repo,
+        paw_uv = refine_paw_pixels(b, R_cw,
                                    float(b["focal_full"]), W, H_)
         print(f"  paw point moved to the sole: median "
               f"{np.median(np.linalg.norm(paw_uv - moved, axis=-1)):.1f} px")

@@ -32,6 +32,9 @@
 # detectron2 + transformers, stages 6-7 need mujoco and this repo's uv env.
 # Set $PY_CAPTURE to the perception interpreter (the 'animal' conda env).
 #
+# AniMer's `amr` package is vendored at the repo root, so no checkout of it is
+# needed. Only $ANIMER_CKPT (8.35 GB) and data/smal/ stay outside the tree.
+#
 # Trap: the stages DISAGREE about user site-packages, so there is no single
 # right setting -- see the two runners defined below. Stage 2 dies without
 # PYTHONNOUSERSITE=1; stages 1, 3 and 8 die with it. Both directions have been

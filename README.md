@@ -63,13 +63,17 @@ export DLC_MODELS="$A2G2_SSD/models/dlc"
 
 `capture/` needs torch + detectron2 + transformers, which conflict with this
 project's mujoco env, so it runs on a separate interpreter. Point `PY_CAPTURE`
-at it, and tell it where AniMer and its checkpoint live:
+at it, and tell it where the AniMer checkpoint lives:
 
 ```bash
 export PY_CAPTURE=$HOME/anaconda3/envs/animal/bin/python
-export ANIMER_ROOT=$HOME/py_workspace/AniMer
 export ANIMER_CKPT=/media/SHARED_DATA/postcapitalistrobots/animer/checkpoints/gdrive_AniMer/checkpoints/checkpoint.ckpt
 ```
+
+No checkout of AniMer is needed — its `amr` package is vendored at
+[`amr/`](amr/) (MIT, see `amr/LICENSE`). What stays outside the tree is the
+8.35 GB checkpoint above, and the SMAL model files at `data/smal/`, which
+arrive with the rest of `data/` via the SSD symlink.
 
 That env is torch 2.5.1+cu121, numpy 2.2.6, timm 1.0.28, transformers ≥4.45,
 detectron2, pytorch3d, opencv, matplotlib. `HF_HOME` is already exported above
@@ -355,17 +359,46 @@ hacks are gone; scripts no longer depend on being invoked by path.
 **Machine-specific paths moved into `capture/paths.py`.** Nothing under
 `capture/` contains a home directory any more. Defaults derive from `$A2G2_SSD`,
 matching the convention the rest of this repo already used, and every one is
-overridable: `ANIMER_ROOT`, `ANIMER_CKPT`, `HF_HOME`, `A2G2_WORK`, `A2G2_CALIB`,
-`PY_CAPTURE`. A missing checkpoint now fails immediately with the variable to
-set, instead of surfacing as an unpickling error minutes into a run.
+overridable: `ANIMER_CKPT`, `HF_HOME`, `A2G2_WORK`, `A2G2_CALIB`, `PY_CAPTURE`.
+A missing checkpoint now fails immediately with the variable to set, instead of
+surfacing as an unpickling error minutes into a run.
 
-**AniMer is not vendored.** `ANIMER_ROOT` points at a checkout of it; stage 1
-puts that on `sys.path` to import `amr.*`, and stage 3 reads its SMAL files.
-Copying an 8.35 GB checkpoint and a whole model repo into this tree to run one
-stage would not have been a migration. Stage 1 still has to `chdir` there —
-AniMer's hydra config stores `SMAL.MODEL_PATH` relative to its own root — so
-the stage now resolves `--video`/`--out`/`--debug-frames` to absolute paths
-first; relative ones used to be silently reinterpreted against the AniMer root.
+**AniMer's `amr` package is vendored**, at [`amr/`](amr/) — 47 files (30 Python,
+16 hydra yaml), 412 KB, MIT licensed, copied verbatim along with its `LICENSE`.
+Verbatim on purpose: a pruned copy is one you have to re-prune on every upstream
+bump. No checkout of AniMer is
+needed and `ANIMER_ROOT` is gone. Taking a *subset* was considered and
+rejected: `load_amr` calls `AMR.load_from_checkpoint`, which rebuilds the full
+LightningModule, and `amr/models/amr.py` imports the discriminator and all six
+loss classes at module level while `amr/utils/__init__.py` imports
+`MeshRenderer` just to expose an 18-line `recursive_to`. Trimming those means
+forking upstream to save ~60 KB of 412 KB. Not worth owning the divergence.
+
+Two details made this safe to do. The checkpoint's hydra config bakes in no
+`amr.*` module paths (its only `_target_` is `pytorch_lightning.Trainer`), so
+the vendored copy keeps the top-level name `amr` and nothing in the checkpoint
+cares. And `get_config(update_cachedir=True)` turns out to be a no-op upstream
+— it defines an `update_path` helper and never calls it — so the config's
+`SMAL.MODEL_PATH` stays the literal relative string `data/smal/...`.
+
+That relative path is why stage 1 still calls `chdir`, but it now chdirs to
+**this** repo instead of a foreign one, which is why `data/` must resolve here.
+The stage also resolves `--video`/`--out`/`--debug-frames` to absolute paths
+before the chdir; relative ones used to be silently reinterpreted against the
+AniMer root.
+
+**`demo_video` is gone**, replaced by [`capture/detector.py`](capture/detector.py).
+Stage 1 used exactly two functions from it — `build_detector` and
+`detect_animals`, about twenty lines of detectron2 glue — but importing the
+module also pulled in trimesh and pyrender for renderer classes the stage never
+calls.
+
+**What vendoring did *not* buy.** The 8.35 GB checkpoint is still external, and
+so is `data/smal/` (34 MB, arriving through the existing SSD symlink — its
+license is unstated by AniMer, so it is not committed here). The environment is
+untouched: `amr/` still needs torch, pytorch_lightning, smplx, einops, timm,
+yacs, skimage, cv2, pytorch3d, trimesh, pyrender and more. Vendoring code does
+not vendor dependencies. The win is a tidier repo, not an easier setup.
 
 **`run_default.sh` goes all the way to the video.** It used to stop at the npz
 and print a `cd ../animal2go2` instruction to run by hand. Both halves live
@@ -396,12 +429,24 @@ suite — so 35 passing tests were invisible. Removed. `conftest.py` now puts th
 repo root on `sys.path`, which is what the per-file boilerplate in
 `tests/test_ik.py` was doing by hand.
 
-**Verification status.** The suite is green at 38 tests: the 35 that already
-existed, plus `tests/test_capture.py` covering the ground-plane round trip, the
-focal-length sensitivity, the horizon mask and the npz contract validator. All
-five stage CLIs load under both interpreters. The pipeline has **not** been run
-end to end since the migration — the dog_3 numbers above are from the AniMer
-repo. Re-running one clip is the outstanding check.
+**Verification status: done, twice.** `dog_3` was run end to end from a wiped
+state — empty work directory, nothing skipped — and reproduced every number in
+[what "good" looks like](#what-good-looks-like) exactly: plane normal
+`[-0.008 -0.996 -0.083]`, camera height 0.580 m, round-trip 8.88e-16, duty 0.77,
+zero-feet 1.7%, scale 0.8950 m/unit, path 2.30 m, root z 0.397 m, skate
+0.020 m, contract passed with toe z −0.043..0.104, retarget scale 0.615, clamp
+0.28%, skate 0.037 → 0.001 m/s.
+
+It was then run **again after vendoring**, with `ANIMER_ROOT` unset and the
+work directory wiped a second time. All five artifacts — `_animer.npz`,
+`_contacts.npz`, `_world.npz`, `processed/dog_3.npz` and `motions/dog_3.pkl` —
+came out **byte-identical** to the pre-vendoring run (sha256). The vendoring
+changed nothing numerically, which is exactly what a copied-verbatim package
+should do.
+
+The test suite is green at 38: the 35 that already existed, plus
+`tests/test_capture.py` covering the ground-plane round trip, the focal-length
+sensitivity, the horizon mask and the npz contract validator.
 
 ## Notes / things that broke (article fodder)
 
