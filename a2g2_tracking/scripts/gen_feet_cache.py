@@ -20,6 +20,10 @@ from isaaclab.app import AppLauncher
 
 parser = argparse.ArgumentParser(description="Generate reference foot-position caches via kinematic replay.")
 parser.add_argument("--task", type=str, default="Template-A2g2-Tracking-Direct-v0")
+parser.add_argument(
+    "--clips", type=str, default=None,
+    help="comma-separated clip names (with or without .pkl); default: the env cfg's motion_files",
+)
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
 
@@ -43,6 +47,11 @@ from a2g2_tracking.tasks.direct.a2g2_tracking.a2g2_tracking_env_cfg import MOTIO
 
 def main():
     env_cfg = parse_env_cfg(args_cli.task, device=args_cli.device, num_envs=None)
+    if args_cli.clips:
+        env_cfg.motion_files = [
+            c if c.endswith(".pkl") else c + ".pkl" for c in args_cli.clips.split(",")
+        ]
+        env_cfg.motion_cyclic = [False] * len(env_cfg.motion_files)
     num_clips = len(env_cfg.motion_files)
     env_cfg.scene.num_envs = num_clips  # env i replays clip i
     env_cfg.kinematic_replay = True

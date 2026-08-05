@@ -115,12 +115,18 @@ if [ ! -f "$CALIB/${CLIP}_depth.json" ] && [ ! -f "$SEED" ]; then
   # plane, H and camera height all come from the depth model.
   IFS=, read -r VW VH < <(ffprobe -v error -select_streams v:0 \
       -show_entries stream=width,height -of csv=p=0 "$VIDEO")
+  # The seed must live in the INFERENCE pixel frame, not the source video's:
+  # animer_infer downscales to max_side 1280 (rounded, floored to even), and
+  # contacts_kine rejects a calibration whose img_size disagrees with it.
   # LC_ALL=C or a comma-decimal locale (es_ES) emits "686,4" and breaks the JSON
-  FOCAL=$(LC_ALL=C awk -v w="$VW" -v r="${FOCAL_RATIO:-0.825}" 'BEGIN{printf "%.1f", w*r}')
-  echo "  no seed for $CLIP -- assuming focal $FOCAL px (${FOCAL_RATIO:-0.825} x ${VW} px width)."
+  IFS=, read -r IW IH < <(LC_ALL=C awk -v w="$VW" -v h="$VH" 'BEGIN{
+    m=1280; mx=(w>h?w:h); s=(mx>m ? m/mx : 1.0);
+    W=int(w*s+0.5); W-=W%2; H=int(h*s+0.5); H-=H%2; printf "%d,%d\n", W, H}')
+  FOCAL=$(LC_ALL=C awk -v w="$IW" -v r="${FOCAL_RATIO:-0.825}" 'BEGIN{printf "%.1f", w*r}')
+  echo "  no seed for $CLIP -- assuming focal $FOCAL px (${FOCAL_RATIO:-0.825} x ${IW} px inference width; source ${VW}x${VH})."
   echo "  THIS IS AN ASSUMPTION, not a measurement. See the header."
   printf '{"camera":"%s_seed","img_size":[%d,%d],"max_side":1280,"focal_px":%s}\n' \
-    "$CLIP" "$VW" "$VH" "$FOCAL" > "$SEED"
+    "$CLIP" "$IW" "$IH" "$FOCAL" > "$SEED"
 fi
 if [ -f "$CALIB/${CLIP}_depth.json" ]; then
   # A calibration from a different depth model would be silently reused and
