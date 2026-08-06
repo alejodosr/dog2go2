@@ -65,10 +65,62 @@ def tracking_camera(model):
     return cam
 
 
-def render_video(model, data, motion, out_path, width=1920, height=1080):
+def matched_camera_model(world_npz, calib_json, motion, height):
+    """Model with a fixed camera at the SOURCE video's viewpoint.
+
+    The capture pipeline solves the real camera (world_place: R_cw and
+    camera_pos, in dog-world metres) and the calibration knows its focal
+    length. The retargeter maps dog world -> pkl frame by a uniform scale
+    about the origin plus an xy shift (fit in retarget_clip; no rotation),
+    and uniform scaling preserves the projected image as long as the camera
+    position is scaled the same way — so placing the camera at
+    scale * camera_pos - shift with the SAME orientation reproduces the
+    source framing exactly. Scale and shift are recovered from the data
+    rather than re-deriving retarget's internals: scale from the z-median
+    ratio (robust to the 50 Hz resample), shift from frame 0.
+
+    Returns (model, data, camera_name, render_width).
+    """
+    import json
+
+    from scipy.spatial.transform import Rotation
+
+    w = np.load(world_npz, allow_pickle=True)
+    cal = json.loads(Path(calib_json).read_text())
+    origin_w = 0.5 * (w["world"][:, 0] + w["world"][:, 1])   # trunk origin, metres
+    s = float(np.median(motion["root_pos"][:, 2]) / np.median(origin_w[:, 2]))
+    t_xy = s * origin_w[0, :2] - motion["root_pos"][0, :2]
+
+    C = w["camera_pos"]
+    campos = np.array([s * C[0] - t_xy[0], s * C[1] - t_xy[1], s * C[2]])
+    # capture camera: +x right, +y down, +z forward; MuJoCo camera: +x right,
+    # +y up, looks along -z
+    R_mj = np.asarray(w["R_cw"]) @ np.diag([1.0, -1.0, -1.0])
+    qx, qy, qz, qw = Rotation.from_matrix(R_mj).as_quat()
+
+    W_, H_ = cal["img_size"]
+    fovy = float(np.degrees(2.0 * np.arctan(H_ / (2.0 * float(cal["focal_px"])))))
+    width = int(round(height * W_ / H_)) // 2 * 2
+
+    spec = mujoco.MjSpec.from_file(str(GO2_SCENE_XML))
+    cam = spec.worldbody.add_camera()
+    cam.name = "source_cam"
+    cam.pos = campos
+    cam.quat = [qw, qx, qy, qz]
+    cam.fovy = fovy
+    model = spec.compile()
+    model.vis.global_.offwidth = max(model.vis.global_.offwidth, width)
+    model.vis.global_.offheight = max(model.vis.global_.offheight, height)
+    print(f"source camera: pos ({campos[0]:.2f}, {campos[1]:.2f}, {campos[2]:.2f}) "
+          f"fovy {fovy:.1f} deg  scale {s:.3f}  render {width}x{height}")
+    return model, mujoco.MjData(model), "source_cam", width
+
+
+def render_video(model, data, motion, out_path, width=1920, height=1080, cam=None):
     qpos = qpos_trajectory(model, motion)
     renderer = mujoco.Renderer(model, height=height, width=width)
-    cam = tracking_camera(model)
+    if cam is None:
+        cam = tracking_camera(model)
     with imageio.get_writer(out_path, fps=motion["fps"]) as writer:
         for q in qpos:
             data.qpos[:] = q
@@ -117,12 +169,30 @@ def main():
                         help="loop in the live passive viewer instead of rendering an mp4")
     parser.add_argument("--out", type=Path, default=None,
                         help="output mp4 path (default media/go2_<clip>.mp4)")
+    parser.add_argument("--camera-world", type=Path, default=None,
+                        help="render from the SOURCE video's solved camera: the "
+                             "clip's <clip>_world.npz (needs --camera-calib)")
+    parser.add_argument("--camera-calib", type=Path, default=None,
+                        help="the clip's depth-calibration json (focal_px, img_size)")
     args = parser.parse_args()
 
     with open(args.motion, "rb") as f:
         motion = pickle.load(f)
     assert motion["robot_type"] == "unitree_go2"
     print(f"{motion['source']}: {motion['num_frames']} frames @ {motion['fps']:.0f} fps")
+
+    if bool(args.camera_world) != bool(args.camera_calib):
+        parser.error("--camera-world and --camera-calib go together")
+    if args.camera_world and args.interactive:
+        parser.error("--camera-world only applies to rendering")
+
+    if args.camera_world:
+        model, data, cam_name, width = matched_camera_model(
+            args.camera_world, args.camera_calib, motion, height=1080)
+        out = args.out or REPO_ROOT / "media" / f"go2_{motion['source']}.mp4"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        render_video(model, data, motion, out, width=width, cam=cam_name)
+        return
 
     model, data = load_model()
     if args.interactive:

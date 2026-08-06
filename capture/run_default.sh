@@ -168,9 +168,11 @@ echo "=== 6/8 retarget to Go2 ==="
 [ -f "$REPO/motions/${CLIP}.pkl" ] || \
   uv run python retarget/retarget.py "$WORK/processed/${CLIP}.npz"
 
-echo "=== 7/8 render the Go2 ==="
+echo "=== 7/8 render the Go2 (from the source video's solved camera) ==="
 [ -f "$REPO/media/go2_${CLIP}.mp4" ] || \
   MUJOCO_GL=egl uv run python viz/playback.py "$REPO/motions/${CLIP}.pkl" \
+    --camera-world "$WORK/${CLIP}_world.npz" \
+    --camera-calib "$CALIB/${CLIP}_depth.json" \
     --out "$REPO/media/go2_${CLIP}.mp4"
 
 echo "=== 8/8 side-by-side ==="

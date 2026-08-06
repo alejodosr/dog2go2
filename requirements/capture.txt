@@ -8,6 +8,8 @@
 # Order matters: this file first — capture-src.txt compiles against the torch
 # pinned here. Pins mirror the known-good environment of 2026-08-06.
 --extra-index-url https://download.pytorch.org/whl/cu121
+setuptools<81                    # detectron2 imports pkg_resources at runtime,
+                                 # which setuptools 81+ removed
 torch==2.5.1+cu121
 torchvision==0.20.1+cu121
 numpy==2.2.6

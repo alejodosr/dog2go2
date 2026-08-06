@@ -2,6 +2,13 @@
 # AFTER it and with --no-build-isolation. detectron2/pytorch3d import torch at
 # build time and need the CUDA toolkit (nvcc) matching torch's CUDA — 12.1;
 # chumpy's ancient setup.py imports pip, which only the real venv has.
-chumpy==0.70
+#
+# If nvcc dies with "cannot execute cc1plus": the default gcc has no matching
+# C++ frontend (e.g. gcc-12 present but only g++-11). Pick one complete
+# toolchain before installing:
+#   export CC=gcc-11 CXX=g++-11 CUDAHOSTCXX=g++-11
+# chumpy: PyPI's 0.70 predates numpy 1.24 (`from numpy import bool` crashes);
+# upstream master (0.71) fixed it but was never released to PyPI.
+chumpy @ git+https://github.com/mattloper/chumpy.git@580566eafc9ac68b2614b64d6f7aaa84eebb70da
 git+https://github.com/facebookresearch/detectron2.git
 git+https://github.com/facebookresearch/pytorch3d.git@V0.7.8

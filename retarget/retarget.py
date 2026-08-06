@@ -90,13 +90,24 @@ def fit_trunk_frame(kp):
 
     # Remove the constant anatomical tilt: the dog's withers sit higher than
     # its hip balls, so the hips->chest axis carries a standing pitch bias
-    # that the equal-legged Go2 should not inherit. Median rather than mean,
-    # so crouch/sit segments don't shift the reference; dynamic pitch/roll
-    # stays. The corrected frame is used for the foot targets too, so foot
-    # world positions are unaffected — only the trunk attitude changes.
+    # that the equal-legged Go2 should not inherit; dynamic pitch/roll stays.
+    # The bias must be measured STANDING. The old clip-wide median broke on
+    # dog_3, which sits for more than half the clip: the median absorbed the
+    # sit pitch (+20 deg) and every standing frame inherited it nose-down,
+    # sweeping the rear feet into the air behind the robot. Standing frames =
+    # all toes near the floor (excludes dog_4's flight, where the max-height
+    # pose is mid-air and stretched) with the pelvis in the top height
+    # quartile of those (excludes sit/crouch). Falls back to the plain median
+    # when the mask starves (a clip that never stands).
     yaw = np.arctan2(x[:, 1], x[:, 0])
     tilt = (Rotation.from_euler("z", -yaw[:, None]) * rot).as_euler("ZYX")
-    bias = Rotation.from_euler("YX", np.median(tilt[:, 1:], axis=0))
+    grounded = (kp["toe_pos"][..., 2] < 2 * CONTACT_HEIGHT_M).all(axis=1)
+    if grounded.sum() >= 5:
+        zr = kp["root_pos"][:, 2]
+        standing = grounded & (zr >= np.quantile(zr[grounded], 0.75))
+    else:
+        standing = np.ones(len(x), bool)
+    bias = Rotation.from_euler("YX", np.median(tilt[standing, 1:], axis=0))
     return origin, rot * bias.inv()
 
 
