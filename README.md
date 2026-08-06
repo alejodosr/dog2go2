@@ -11,9 +11,9 @@ DeepMimic-style PPO policy in Isaac Lab to reproduce it under physics.
 
 The pipeline runs on three Python environments, all managed with
 [uv](https://docs.astral.sh/uv/). They stay separate because their
-dependencies genuinely conflict — detectron2 and pytorch3d are compiled
+dependencies genuinely conflict (detectron2 and pytorch3d are compiled
 against one torch build, Isaac Sim pins its own runtime, and the MuJoCo half
-needs neither — but they exchange files (npz and pkl) and nothing else.
+needs neither).
 
 **1 · The uv project** — retargeting, rendering, unit tests. Requires
 [uv](https://docs.astral.sh/uv/) and Python ≥ 3.11:
@@ -24,11 +24,7 @@ uv sync
 ```
 
 **2 · The capture environment** — turns video into motion (`capture/`).
-Python 3.10 with the torch perception stack; uv creates the env and manages
-the Python toolchain itself. The second install step compiles detectron2 and
-pytorch3d against the pinned torch, so the CUDA 12.1 toolkit (nvcc) must be
-installed; `ffmpeg` must be on PATH. AniMer's `amr` package is already
-vendored in this repo, so no AniMer checkout is needed.
+CUDA 12.1 toolkit (nvcc) must be installed; `ffmpeg` must be on PATH. 
 
 ```bash
 uv venv --python 3.10 --seed $A2G2_SSD/venvs/env_capture
