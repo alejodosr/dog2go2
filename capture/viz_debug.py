@@ -72,6 +72,10 @@ def main():
     p.add_argument("--video", required=True)
     p.add_argument("--out", required=True)
     p.add_argument("--stride", type=int, default=1)
+    p.add_argument("--trim", default=None,
+                   help="start,end video frames the world npz covers. "
+                        "Defaults to the npz's own record (world_place stores "
+                        "it); only needed for npz files older than that field")
     p.add_argument("--height", type=int, default=480)
     p.add_argument("--grid-half", type=float, default=2.0,
                    help="half-extent (m) of the projected floor grid around "
@@ -98,9 +102,23 @@ def main():
     F_conv = float(b["focal_full"])
     H_inv = np.array(cal["H_inv"], float)
 
+    # The world npz may be a TRIMMED view of the video (world_place --trim);
+    # the infer/contacts npz are always untrimmed. a0 aligns the three:
+    # world index = video frame - a0.
+    if args.trim:
+        a0, a1 = [int(x) for x in args.trim.split(",")]
+    elif "trim" in w.files:
+        a0, a1 = [int(v) for v in w["trim"]]
+    else:
+        a0, a1 = 0, N
+    if a1 - a0 != N:
+        raise SystemExit(f"trim {a0},{a1} covers {a1 - a0} frames but the "
+                         f"world npz has {N}")
+    sl = slice(a0, a0 + N)
+
     # AniMer's own camera-frame skeleton (model units, weak camera F_conv)
     pts_cam_animer = (b["points_local"] + b["root_model"][:, None, :]
-                      + b["cam_t"][:, None, :])
+                      + b["cam_t"][:, None, :])[sl]
     uv_animer = project_points(pts_cam_animer, F_conv, W, H_)
 
     # solved world skeleton back through the CALIBRATED camera; the stored
@@ -108,7 +126,7 @@ def main():
     pts_cam_world = np.einsum("nkj,ji->nki", world - C, R_cw)
     uv_world = project_points(pts_cam_world, focal, W, H_)
 
-    paw_uv = w["paw_uv"] if "paw_uv" in w.files else c["paw_uv"]
+    paw_uv = w["paw_uv"] if "paw_uv" in w.files else c["paw_uv"][sl]
 
     # floor grid in world metres around where the dog actually is
     toe_med = np.median(world[:, TOE0:TOE0 + 4, :2].reshape(-1, 2), axis=0)
@@ -182,14 +200,15 @@ def main():
         raise SystemExit(f"could not open {args.video}")
 
     writer = None
-    idx, written = -1, 0
+    vfr, written = -1, 0
     root_trail = []
     while True:
         ok, frame = cap.read()
         if not ok:
             break
-        idx += 1
-        if idx >= N or idx % args.stride:
+        vfr += 1
+        idx = vfr - a0            # index into the trimmed world/infer arrays
+        if not (0 <= idx < N) or idx % args.stride:
             continue
 
         fh, fw = frame.shape[:2]

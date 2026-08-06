@@ -17,7 +17,7 @@ AniMer's `amr` package is vendored at the repo root, so no checkout of it is
 needed; only the checkpoint ($ANIMER_CKPT) and `data/smal/` stay external.
 Everything downstream of this stage is pure numpy/scipy and needs no GPU.
 
-Two things happen to the raw AniMer output here, both from brief §4.1:
+Three things happen to the raw AniMer output here, the first two from brief §4.1:
 
   1. beta is frozen to the per-clip median. AniMer regresses shape per frame
      and it wobbles; a varying beta is a varying skeleton, which makes the
@@ -25,6 +25,14 @@ Two things happen to the raw AniMer output here, both from brief §4.1:
      `beta_wobble_*` diagnostics.
   2. theta is smoothed in 6D rotation representation before FK. Not axis-angle:
      wraparound produces artifacts.
+  3. cam_t is re-fitted so the projected mesh bbox tracks the DETECTOR bbox
+     (see bbox_align_camt). AniMer's pred_cam scale fails on foreshortened
+     poses — on dog_4's vertical jump tz spiked +23% over 6 frames while the
+     detector held the dog throughout, which downstream reads as the dog
+     teleporting 1.5 m away mid-jump (cam_t_z is world_place_ba's depth cue,
+     and paw_uv is projected through cam_t). The correction is normalized to
+     the clip median, so frames where AniMer and the detector agree are
+     untouched; measured on dog_4 the corrected tz is flat through the jump.
 
 The joints we need are NOT what the model hands back. `pred_keypoints_3d` is 26
 *surface landmarks* (SMAL.forward overwrites smal_output.joints with them), so
@@ -161,6 +169,58 @@ def lowpass(x, fps, cutoff):
     return filtfilt(b, a, flat, axis=0).reshape(x.shape)
 
 
+def bbox_align_camt(verts, camt, det_box, valid, focal, W, H, fps, cutoff,
+                    max_scale=1.4):
+    """Re-fit cam_t so the projected mesh bbox tracks the detector bbox.
+
+    The detector and AniMer see the same crop, but the detector's box stays on
+    the animal in exactly the poses where pred_cam's scale drifts (strong
+    foreshortening, rearing). Matching absolute boxes would be wrong — the
+    mesh bbox systematically overshoots the detector's (tail, ears), and that
+    offset is pose-dependent — so both the height ratio and the centre offset
+    are normalized by their clip medians: the correction is IDENTITY on the
+    frames where the two agree, and only the per-frame DEVIATION from the
+    typical relationship is corrected. Targets are gap-filled over undetected
+    frames and low-passed at the theta cutoff before solving, so the
+    correction cannot re-introduce per-frame jitter.
+
+    Scale moves tz (height ~ focal/tz), centre moves tx, ty. Solved by
+    fixed-point iteration on the true perspective projection; three rounds
+    converge to sub-pixel. Returns (camt, tz_ratio) with tz_ratio clipped to
+    [1/max_scale, max_scale].
+    """
+    camt = camt.copy()
+    tz0 = camt[:, 2].copy()
+
+    def mesh_bbox(ct):
+        vc = verts + ct[:, None, :]
+        z = np.maximum(vc[..., 2], 1e-6)
+        u = focal * vc[..., 0] / z + W / 2.0
+        v = focal * vc[..., 1] / z + H / 2.0
+        return (np.stack([(u.min(1) + u.max(1)) / 2,
+                          (v.min(1) + v.max(1)) / 2], axis=-1),
+                v.max(1) - v.min(1))
+
+    ctr, h = mesh_bbox(camt)
+    det_ctr = (det_box[:, :2] + det_box[:, 2:]) / 2.0
+    det_h = det_box[:, 3] - det_box[:, 1]
+    ratio = h / np.maximum(det_h, 1e-6)
+    ratio_norm = np.median(ratio[valid])
+    h_tgt = det_h * ratio_norm
+    ctr_tgt = det_ctr + np.median((ctr - det_ctr)[valid], axis=0)
+    h_tgt = lowpass(interp_gaps(h_tgt, valid), fps, cutoff)
+    ctr_tgt = lowpass(interp_gaps(ctr_tgt, valid), fps, cutoff)
+
+    for _ in range(3):
+        ctr, h = mesh_bbox(camt)
+        camt[:, 2] = np.clip(camt[:, 2] * h / np.maximum(h_tgt, 1e-6),
+                             tz0 / max_scale, tz0 * max_scale)
+        ctr, h = mesh_bbox(camt)
+        zbar = camt[:, 2] + verts[..., 2].mean(axis=1)
+        camt[:, :2] += (ctr_tgt - ctr) * zbar[:, None] / focal
+    return camt, camt[:, 2] / tz0
+
+
 def hf_power_fraction(x, fps, split_hz):
     """Fraction of variance above split_hz, averaged over channels.
 
@@ -196,6 +256,10 @@ def main():
     p.add_argument("--det-thresh", type=float, default=0.7)
     p.add_argument("--theta-cutoff", type=float, default=6.0,
                    help="Butterworth cutoff (Hz) for theta smoothing in 6D")
+    p.add_argument("--no-bbox-align", dest="bbox_align", action="store_false",
+                   default=True,
+                   help="disable re-fitting cam_t to the detector bbox "
+                        "(see bbox_align_camt)")
     p.add_argument("--jitter-split", type=float, default=10.0,
                    help="frequency above which power counts as jitter")
     p.add_argument("--debug-frames", type=str, default=None,
@@ -260,6 +324,7 @@ def main():
         debug_dir.mkdir(parents=True, exist_ok=True)
 
     go_raw, pose_raw, betas_raw, camt_raw, valid, frame_idx = [], [], [], [], [], []
+    box_raw = []
     debug_cache = {}
 
     idx = -1
@@ -288,7 +353,9 @@ def main():
             pose_raw.append(np.tile(np.eye(3), (34, 1, 1)))
             betas_raw.append(np.zeros(41))
             camt_raw.append(np.zeros(3))
+            box_raw.append(np.full(4, np.nan))
             continue
+        box_raw.append(boxes[0].astype(np.float64))
 
         ds = ViTDetDataset(model_cfg, frame_rgb, boxes)
         with contextlib.redirect_stdout(io.StringIO()):   # it prints per crop
@@ -327,6 +394,7 @@ def main():
     pose_raw = np.asarray(pose_raw)        # (N, 34, 3, 3)
     betas_raw = np.asarray(betas_raw)      # (N, 41)
     camt_raw = np.asarray(camt_raw)        # (N, 3)
+    box_raw = np.asarray(box_raw)          # (N, 4) x0 y0 x1 y1, nan on miss
 
     # ---- diagnostic: how much was beta wobbling? -------------------------
     # Bone lengths depend only on beta (they are rest-skeleton distances), so
@@ -397,6 +465,13 @@ def main():
     root = points[:, 0:1, :].copy()
     points_local = points - root
 
+    # ---- re-fit cam_t to the detector bbox (docstring point 3) -----------
+    tz_ratio = np.ones(N)
+    if args.bbox_align:
+        camt_s, tz_ratio = bbox_align_camt(verts, camt_s, box_raw, valid,
+                                           focal_full, W, H, fps,
+                                           args.theta_cutoff)
+
     # ---- paw pixel tracks ------------------------------------------------
     # Project the same paw points that Phase D will use in the body frame, so
     # the world side and body side of the rigid fit are the SAME physical
@@ -429,6 +504,11 @@ def main():
           f"max {100 * beta_wobble_max:.2f}%   <- removed by freezing")
     print(f"  theta jitter >{args.jitter_split:.0f} Hz       "
           f"{100 * jit_before:.2f}% -> {100 * jit_after:.2f}% of variance")
+    if args.bbox_align:
+        dev = np.abs(tz_ratio - 1.0)
+        print(f"  bbox tz correction         median {100 * np.median(dev):.1f}%  "
+              f"max {100 * dev.max():.1f}%   "
+              f"({int((dev > 0.05).sum())} frames beyond 5%)")
     # FK sanity: a SINGLE bone is rigid once beta is frozen, so its spread must
     # be ~0. pelvis->chest is NOT a valid check -- it spans joints 0..6 through
     # the articulated spine, so it legitimately varies as the dog flexes.
@@ -457,6 +537,8 @@ def main():
         pose=pose_s.astype(np.float64),
         betas_frozen=betas_frozen.astype(np.float64),
         cam_t=camt_s.astype(np.float64),
+        det_box=box_raw.astype(np.float64),
+        bbox_tz_ratio=tz_ratio.astype(np.float64),
         img_size=np.asarray([W, H]),
         focal_full=float(focal_full),
         theta_cutoff=float(args.theta_cutoff),

@@ -128,6 +128,7 @@ def main():
     contacts = (c["contacts"] & c["valid"][:, None]).copy()
     valid = c["valid"].copy()
     ct_obs = b["cam_t"] + b["root_model"]       # raw-frame root, units
+    a0 = 0
     if args.trim:
         a0, a1 = [int(x) for x in args.trim.split(",")]
         sl = slice(a0, a1)
@@ -505,6 +506,9 @@ def main():
                         anchored=anchored, R_cw=R_cw, camera_pos=C,
                         paw_uv=uv, ortho_resid=ortho,
                         metres_per_unit=float(s),
+                        trim=np.array([a0, a0 + N]),  # video frames covered,
+                                                      # so viz can align the
+                                                      # untrimmed infer npz
                         anchors=an, run_id=run_id, solver="ba")
     print(f"wrote {out}")
 

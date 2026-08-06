@@ -24,6 +24,10 @@ construction. The gate (PLAN.md Phase 1) is that ONE set of constants works
 across every camera height on the harness and across the three real clips,
 where contacts_ground needed per-clip tuning (0.20 / 0.35 / 0.25).
 
+The votes are backstopped by one VETO: a claimed stance whose homography
+floor track is sweeping (see --ground-veto). The vote set is gait-shaped and
+misfires on a vertical jump — see the veto's comment in main().
+
 Output contract matches contacts_ground.py, so world_place.py and
 world_place_ba.py consume either interchangeably. `ground` (homography
 positions) is still emitted — placement needs floor MEASUREMENTS; this file
@@ -37,7 +41,8 @@ import numpy as np
 
 from capture import paths
 from capture.contacts_2d import lowpass, refine_contacts, runs, MIN_SEGMENT_S, LEGS
-from capture.contacts_ground import (ground_positions, refine_paw_pixels, in_polygon)
+from capture.contacts_ground import (ground_positions, refine_paw_pixels, in_polygon,
+                                     body_length_m)
 from capture.world_place import camera_to_world
 
 TOE0 = 6
@@ -61,6 +66,12 @@ def main():
                    help="planted if depth-normalised pixel speed is below "
                         "this, in leg lengths per second")
     p.add_argument("--votes", type=int, default=2, help="votes needed of 3")
+    p.add_argument("--ground-veto", type=float, default=3.0,
+                   help="a claimed stance is vetoed if its homography floor "
+                        "track moves faster than this (leg lengths/s); 0 "
+                        "disables. An order of magnitude above the stance "
+                        "detection thresholds, so it only fires on the "
+                        "physically impossible (see the comment in main)")
     p.add_argument("--cutoff", type=float, default=4.0,
                    help="Hz low-pass before differentiating")
     p.add_argument("--refine-paws", action="store_true", default=True)
@@ -119,12 +130,49 @@ def main():
     Hm = np.array(cal["H"])
     ground, ok = ground_positions(Hm, paw_uv)
     inside = in_polygon(cal["validity_polygon"], paw_uv)
+
+    # ---- veto: a planted paw's floor track must be stationary --------------
+    # The three votes are gait-shaped and misfire on a vertical jump (dog_4's
+    # landing): during the descent no leg sweeps forward (vote 1 calls stance)
+    # and the rear toes are the body's lowest (vote 2 agrees), so the FALLING
+    # paw is labelled planted for six frames while its homography floor track
+    # sweeps 4-16 leg lengths/s toward the camera — handing placement a train
+    # of far-away anchors that read as the dog rushing 1.5 m away and back
+    # mid-jump. Floor speed was rejected as a DETECTOR because d/h amplifies
+    # mesh noise into the decision band (module docstring); as a VETO it is
+    # separated by an order of magnitude: genuinely planted feet measure
+    # <= 1.2 leg/s here WITH the amplification (boundary lift-off frames up
+    # to 3.7), the false landing 4.3-16. body_length_m makes the threshold
+    # leg-relative without needing metres-per-unit, which does not exist yet.
+    nveto = 0
+    if args.ground_veto > 0:
+        spread_u = float(np.median(np.linalg.norm(
+            pts[:, TOE0:TOE0 + 4].max(axis=1)
+            - pts[:, TOE0:TOE0 + 4].min(axis=1), axis=-1)))
+        leg_m = leg_len * body_length_m(Hm, paw_uv) / max(spread_u, 1e-9)
+        gf = ground.copy()                    # gap-fill so filtfilt survives
+        idx = np.arange(N)
+        for l in range(4):
+            fin = np.isfinite(gf[:, l]).all(axis=1)
+            if not fin.all() and fin.any():
+                for cc in range(2):
+                    gf[:, l, cc] = np.interp(idx, idx[fin], gf[fin, l, cc])
+        gspeed = np.linalg.norm(np.gradient(lowpass(gf, fps, args.cutoff),
+                                            axis=0), axis=-1) * fps
+        fast = gspeed > args.ground_veto * leg_m
+        nveto = int((contacts & fast).sum())
+        contacts = refine_contacts(contacts & ~fast,
+                                   max(2, int(round(MIN_SEGMENT_S * fps))))
+
     valid &= ok.all(axis=1)
     contacts &= valid[:, None]
 
     print(f"clip {str(b['source'])}: {N} frames @ {fps:.3f} fps  "
           f"(kinematic contacts, no floor speed)")
     print(f"  leg length {leg_len:.3f} units; votes needed {args.votes}/3")
+    if args.ground_veto > 0:
+        print(f"  ground-speed veto (> {args.ground_veto:.1f} leg/s) removed "
+              f"{nveto} stance foot-frames")
     for i, leg in enumerate(LEGS):
         print(f"  {leg} duty {contacts[valid, i].mean():.3f}   "
               f"votes fwd/h/px "

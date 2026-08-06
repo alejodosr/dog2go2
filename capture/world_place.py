@@ -162,9 +162,10 @@ def main():
     valid = c["valid"].copy()
 
     paw_uv = c["paw_uv"] if "paw_uv" in c.files else b["paw_uv"]
+    a0 = 0
     if args.trim:
-        a, bb = [int(x) for x in args.trim.split(",")]
-        sl = slice(a, bb)
+        a0, bb = [int(x) for x in args.trim.split(",")]
+        sl = slice(a0, bb)
         pts, ground, contacts, valid = pts[sl], ground[sl], contacts[sl], valid[sl]
         paw_uv = paw_uv[sl]
     N = len(pts)
@@ -304,7 +305,8 @@ def main():
                         paw_uv=paw_uv,   # carried through so the overlays draw
                                          # the point the contacts were built on
 
-                        ortho_resid=ortho, metres_per_unit=args.metres_per_unit)
+                        ortho_resid=ortho, metres_per_unit=args.metres_per_unit,
+                        trim=np.array([a0, a0 + N]))
     print(f"wrote {out}")
 
 
