@@ -233,5 +233,5 @@ Code in this repo is the author's. Vendored: Unitree Go2 model from
 
 ---
 
-Made with ❤️ from [Postcapitalist Robots](https://postcapitalistrobots.substack.com)
+Made with ❤️ by [Postcapitalist Robots](https://postcapitalistrobots.substack.com)
 for the Open Source Community.
