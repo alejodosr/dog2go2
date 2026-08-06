@@ -9,6 +9,20 @@ DeepMimic-style PPO policy in Isaac Lab to reproduce it under physics.
 
 ## ⚡ Install
 
+### Environment variables
+
+```bash
+export A2G2_SSD=/path/to/bulk/storage     # root for weights, work dirs, logs, caches
+export PY_CAPTURE=$A2G2_SSD/venvs/env_capture/bin/python
+export ANIMER_CKPT=/path/to/AniMer/checkpoint.ckpt
+```
+
+`capture/run_default.sh` derives everything else from `$A2G2_SSD` (work dirs,
+`$HF_HOME`, calibration folder); each path can also be overridden
+individually — see `capture/paths.py`.
+
+### Three environments
+
 The pipeline runs on three Python environments, all managed with
 [uv](https://docs.astral.sh/uv/). They stay separate because their
 dependencies genuinely conflict (detectron2 and pytorch3d are compiled
@@ -64,18 +78,6 @@ uv pip install -e a2g2_tracking/source/a2g2_tracking
 curl -L -o data/MotionCapture.zip https://starke-consult.de/AI4Animation/SIGGRAPH_2018/MotionCapture.zip
 unzip -o data/MotionCapture.zip -d data/
 ```
-
-### Environment variables
-
-```bash
-export A2G2_SSD=/path/to/bulk/storage     # root for weights, work dirs, logs, caches
-export PY_CAPTURE=$A2G2_SSD/venvs/env_capture/bin/python
-export ANIMER_CKPT=/path/to/AniMer/checkpoint.ckpt
-```
-
-`capture/run_default.sh` derives everything else from `$A2G2_SSD` (work dirs,
-`$HF_HOME`, calibration folder); each path can also be overridden
-individually — see `capture/paths.py`.
 
 ## 🏃 Quick run
 
