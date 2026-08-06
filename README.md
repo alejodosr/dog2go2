@@ -5,7 +5,7 @@ a Unitree Go2. It lifts the dog's 3D pose from video, places it in a metric
 world, retargets the motion onto the robot with analytic IK, and trains a
 DeepMimic-style PPO policy in Isaac Lab to reproduce it under physics.
 
-<img width="1280" height="720" alt="telegram-cloud-photo-size-4-6028323995846905170-y" src="https://github.com/user-attachments/assets/fa0d1193-f3c5-488b-8e96-fc7b3b77ec3d" />
+<img width="1280" height="720" alt="do2go2" src="https://github.com/user-attachments/assets/7a8d9432-7955-49d2-b706-f99b495b6a69" />
 
 ## ⚡ Install
 
