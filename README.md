@@ -67,7 +67,7 @@ uv pip install -e a2g2_tracking/source/a2g2_tracking
 
 | what | size | goes to | how |
 |---|---|---|---|
-| [AniMer](https://github.com/luoxue-star/AniMer) ViT-H checkpoint | 8.35 GB | `$ANIMER_CKPT` | download from the AniMer repo (the 2.7 GB ViT-S variant will be rejected by the loader) |
+| [AniMer](https://drive.google.com/drive/folders/1rr2dx8CPhVUoEASjxmjE0LJakrUYp0DQ?usp=sharing) ViT-H checkpoint | 8.35 GB | `$ANIMER_CKPT` | download from the AniMer repo (the 2.7 GB ViT-S variant will be rejected by the loader) |
 | [SMAL](https://smal.is.tue.mpg.de/) model files | 34 MB | `data/smal/` | register on the SMAL site; its license forbids redistribution |
 | Depth Anything V2 (metric, indoor, large) | ~1.3 GB | `$HF_HOME` | automatic on first run |
 | Faster R-CNN COCO detector weights | ~430 MB | detectron2 cache | automatic on first run |
