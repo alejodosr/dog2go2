@@ -5,15 +5,29 @@ a Unitree Go2. It lifts the dog's 3D pose from video, places it in a metric
 world, retargets the motion onto the robot with analytic IK, and trains a
 DeepMimic-style PPO policy in Isaac Lab to reproduce it under physics.
 
-<img width="1280" height="720" alt="telegram-cloud-photo-size-4-6028323995846905170-y" src="https://github.com/user-attachments/assets/fa0d1193-f3c5-488b-8e96-fc7b3b77ec3d" />
+<img width="1280" height="720" alt="do2go2" src="https://github.com/user-attachments/assets/7a8d9432-7955-49d2-b706-f99b495b6a69" />
 
 ## ⚡ Install
 
+### Environment variables
+
+```bash
+export A2G2_SSD=/path/to/bulk/storage     # root for weights, work dirs, logs, caches
+export PY_CAPTURE=$A2G2_SSD/venvs/env_capture/bin/python
+export ANIMER_CKPT=/path/to/AniMer/checkpoint.ckpt
+```
+
+`capture/run_default.sh` derives everything else from `$A2G2_SSD` (work dirs,
+`$HF_HOME`, calibration folder); each path can also be overridden
+individually — see `capture/paths.py`.
+
+### Three environments
+
 The pipeline runs on three Python environments, all managed with
 [uv](https://docs.astral.sh/uv/). They stay separate because their
-dependencies genuinely conflict — detectron2 and pytorch3d are compiled
+dependencies genuinely conflict (detectron2 and pytorch3d are compiled
 against one torch build, Isaac Sim pins its own runtime, and the MuJoCo half
-needs neither — but they exchange files (npz and pkl) and nothing else.
+needs neither).
 
 **1 · The uv project** — retargeting, rendering, unit tests. Requires
 [uv](https://docs.astral.sh/uv/) and Python ≥ 3.11:
@@ -24,11 +38,7 @@ uv sync
 ```
 
 **2 · The capture environment** — turns video into motion (`capture/`).
-Python 3.10 with the torch perception stack; uv creates the env and manages
-the Python toolchain itself. The second install step compiles detectron2 and
-pytorch3d against the pinned torch, so the CUDA 12.1 toolkit (nvcc) must be
-installed; `ffmpeg` must be on PATH. AniMer's `amr` package is already
-vendored in this repo, so no AniMer checkout is needed.
+CUDA 12.1 toolkit (nvcc) must be installed; `ffmpeg` must be on PATH. 
 
 ```bash
 uv venv --python 3.10 --seed $A2G2_SSD/venvs/env_capture
@@ -57,7 +67,7 @@ uv pip install -e a2g2_tracking/source/a2g2_tracking
 
 | what | size | goes to | how |
 |---|---|---|---|
-| [AniMer](https://github.com/luoxue-star/AniMer) ViT-H checkpoint | 8.35 GB | `$ANIMER_CKPT` | download from the AniMer repo (the 2.7 GB ViT-S variant will be rejected by the loader) |
+| [AniMer](https://drive.google.com/drive/folders/1rr2dx8CPhVUoEASjxmjE0LJakrUYp0DQ?usp=sharing) ViT-H checkpoint | 8.35 GB | `$ANIMER_CKPT` | download from the AniMer repo (the 2.7 GB ViT-S variant will be rejected by the loader) |
 | [SMAL](https://smal.is.tue.mpg.de/) model files | 34 MB | `data/smal/` | register on the SMAL site; its license forbids redistribution |
 | Depth Anything V2 (metric, indoor, large) | ~1.3 GB | `$HF_HOME` | automatic on first run |
 | Faster R-CNN COCO detector weights | ~430 MB | detectron2 cache | automatic on first run |
@@ -68,18 +78,6 @@ uv pip install -e a2g2_tracking/source/a2g2_tracking
 curl -L -o data/MotionCapture.zip https://starke-consult.de/AI4Animation/SIGGRAPH_2018/MotionCapture.zip
 unzip -o data/MotionCapture.zip -d data/
 ```
-
-### Environment variables
-
-```bash
-export A2G2_SSD=/path/to/bulk/storage     # root for weights, work dirs, logs, caches
-export PY_CAPTURE=$A2G2_SSD/venvs/env_capture/bin/python
-export ANIMER_CKPT=/path/to/AniMer/checkpoint.ckpt
-```
-
-`capture/run_default.sh` derives everything else from `$A2G2_SSD` (work dirs,
-`$HF_HOME`, calibration folder); each path can also be overridden
-individually — see `capture/paths.py`.
 
 ## 🏃 Quick run
 
@@ -235,5 +233,5 @@ Code in this repo is the author's. Vendored: Unitree Go2 model from
 
 ---
 
-Made with ❤️ from [Postcapitalist Robots](https://postcapitalistrobots.substack.com)
+Made with ❤️ by [Postcapitalist Robots](https://postcapitalistrobots.substack.com)
 for the Open Source Community.
