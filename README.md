@@ -22,15 +22,36 @@ git clone <this repo> && cd dog2go2
 uv sync
 ```
 
-**2 · The capture environment** — turns video into motion (`capture/`). A
-separate conda env or venv with the torch stack: torch 2.5.1+cu121,
-detectron2, pytorch3d, transformers ≥ 4.45, timm, opencv, matplotlib.
-AniMer's `amr` package is already vendored in this repo, so no AniMer
-checkout is needed. Point `$PY_CAPTURE` at its interpreter (below).
+**2 · The capture environment** — turns video into motion (`capture/`).
+Python 3.10 with the torch perception stack. detectron2 and pytorch3d build
+from source against the installed torch, so the CUDA toolkit (nvcc) must be
+present; `ffmpeg` must be on PATH. AniMer's `amr` package is already vendored
+in this repo, so no AniMer checkout is needed.
 
-**3 · The RL environment** — trains the policy (`a2g2_tracking/`). Its own
-venv with Isaac Lab v2.3.1 on Isaac Sim 5.1.0; the pinned install steps are
-in [a2g2_tracking/README.md](a2g2_tracking/README.md).
+```bash
+conda create -n animal python=3.10 -y && conda activate animal
+pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
+pip install 'git+https://github.com/facebookresearch/detectron2.git'
+pip install 'git+https://github.com/facebookresearch/pytorch3d.git'
+pip install transformers timm smplx chumpy einops pyrender trimesh \
+            scipy opencv-python matplotlib imageio imageio-ffmpeg
+```
+
+**3 · The RL environment** — trains the policy (`a2g2_tracking/`). Python
+3.11 venv with Isaac Sim 5.1.0 (pip, NVIDIA index), Isaac Lab v2.3.1 from a
+pinned checkout, and this repo's task package installed editable:
+
+```bash
+python3.11 -m venv $A2G2_SSD/venvs/env_isaaclab
+source $A2G2_SSD/venvs/env_isaaclab/bin/activate
+pip install torch==2.7.0 --index-url https://download.pytorch.org/whl/cu128
+pip install 'isaacsim[all,extscache]==5.1.0' --extra-index-url https://pypi.nvidia.com
+git clone https://github.com/isaac-sim/IsaacLab.git ~/py_workspace/IsaacLab
+cd ~/py_workspace/IsaacLab && git checkout v2.3.1
+./isaaclab.sh --install rsl_rl
+cd -  # back to this repo
+pip install -e a2g2_tracking/source/a2g2_tracking
+```
 
 ### Models and data
 
@@ -40,7 +61,13 @@ in [a2g2_tracking/README.md](a2g2_tracking/README.md).
 | [SMAL](https://smal.is.tue.mpg.de/) model files | 34 MB | `data/smal/` | register on the SMAL site; its license forbids redistribution |
 | Depth Anything V2 (metric, indoor, large) | ~1.3 GB | `$HF_HOME` | automatic on first run |
 | Faster R-CNN COCO detector weights | ~430 MB | detectron2 cache | automatic on first run |
-| AI4Animation dog mocap (only for the mocap path) | ~800 MB | `data/` | `curl` command in [CHANGELOG](CHANGELOG.md#setup) |
+| AI4Animation dog mocap (only for the mocap path) | ~800 MB | `data/` | command below |
+
+```bash
+# only needed for the mocap entry point (CC BY-NC 4.0, not redistributed here)
+curl -L -o data/MotionCapture.zip https://starke-consult.de/AI4Animation/SIGGRAPH_2018/MotionCapture.zip
+unzip -o data/MotionCapture.zip -d data/
+```
 
 ### Environment variables
 
@@ -143,8 +170,9 @@ the reference preview disambiguates. Follow training with
 
 ## 🧪 Preliminary tests with Mocap
 
-In case you want to test RL learning first from mocap's ground-truth data. Each layer has a cheap check, runnable in order (the mocap path needs the
-AI4Animation dataset, see CHANGELOG):
+In case you want to test RL learning first from mocap's ground-truth data.
+Each layer has a cheap check, runnable in order (the mocap path needs the
+AI4Animation dataset — download command in the install section):
 
 ```bash
 # 0 · unit tests: IK round-trip, npz contract, capture numerics (no GPU)
