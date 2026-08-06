@@ -1,0 +1,15 @@
+# RL environment: Python 3.11. Isaac Sim comes from NVIDIA's package index.
+#
+#   uv venv --python 3.11 --seed $A2G2_SSD/venvs/env_isaaclab
+#   source $A2G2_SSD/venvs/env_isaaclab/bin/activate
+#   uv pip install -r requirements/isaaclab.txt
+#   git clone https://github.com/isaac-sim/IsaacLab.git ~/py_workspace/IsaacLab
+#   (cd ~/py_workspace/IsaacLab && git checkout v2.3.1 && ./isaaclab.sh --install rsl_rl)
+#   uv pip install -e a2g2_tracking/source/a2g2_tracking
+#
+# --seed matters: isaaclab.sh shells out to `python -m pip`, which a bare
+# uv venv does not have.
+--extra-index-url https://download.pytorch.org/whl/cu128
+--extra-index-url https://pypi.nvidia.com
+torch==2.7.0+cu128
+isaacsim[all,extscache]==5.1.0

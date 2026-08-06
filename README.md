@@ -9,10 +9,11 @@ DeepMimic-style PPO policy in Isaac Lab to reproduce it under physics.
 
 ## ⚡ Install
 
-The pipeline runs on three Python environments. They exchange files (npz and
-pkl) and nothing else, because their dependencies genuinely conflict:
-detectron2 and pytorch3d are compiled against one torch build, Isaac Sim pins
-its own runtime, and the MuJoCo half needs neither.
+The pipeline runs on three Python environments, all managed with
+[uv](https://docs.astral.sh/uv/). They stay separate because their
+dependencies genuinely conflict — detectron2 and pytorch3d are compiled
+against one torch build, Isaac Sim pins its own runtime, and the MuJoCo half
+needs neither — but they exchange files (npz and pkl) and nothing else.
 
 **1 · The uv project** — retargeting, rendering, unit tests. Requires
 [uv](https://docs.astral.sh/uv/) and Python ≥ 3.11:
@@ -23,34 +24,33 @@ uv sync
 ```
 
 **2 · The capture environment** — turns video into motion (`capture/`).
-Python 3.10 with the torch perception stack. detectron2 and pytorch3d build
-from source against the installed torch, so the CUDA toolkit (nvcc) must be
-present; `ffmpeg` must be on PATH. AniMer's `amr` package is already vendored
-in this repo, so no AniMer checkout is needed.
+Python 3.10 with the torch perception stack; uv creates the env and manages
+the Python toolchain itself. The second install step compiles detectron2 and
+pytorch3d against the pinned torch, so the CUDA 12.1 toolkit (nvcc) must be
+installed; `ffmpeg` must be on PATH. AniMer's `amr` package is already
+vendored in this repo, so no AniMer checkout is needed.
 
 ```bash
-conda create -n animal python=3.10 -y && conda activate animal
-pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
-pip install 'git+https://github.com/facebookresearch/detectron2.git'
-pip install 'git+https://github.com/facebookresearch/pytorch3d.git'
-pip install transformers timm smplx chumpy einops pyrender trimesh \
-            scipy opencv-python matplotlib imageio imageio-ffmpeg
+uv venv --python 3.10 --seed $A2G2_SSD/venvs/env_capture
+uv pip install --python $A2G2_SSD/venvs/env_capture/bin/python \
+    -r requirements/capture.txt
+uv pip install --python $A2G2_SSD/venvs/env_capture/bin/python \
+    --no-build-isolation -r requirements/capture-src.txt   # compiles, ~30 min
 ```
 
 **3 · The RL environment** — trains the policy (`a2g2_tracking/`). Python
-3.11 venv with Isaac Sim 5.1.0 (pip, NVIDIA index), Isaac Lab v2.3.1 from a
-pinned checkout, and this repo's task package installed editable:
+3.11 with Isaac Sim 5.1.0 (NVIDIA's package index), Isaac Lab v2.3.1 from a
+pinned checkout, and this repo's task package installed editable. `--seed`
+matters: `isaaclab.sh` shells out to `python -m pip`, which a bare uv venv
+does not have.
 
 ```bash
-python3.11 -m venv $A2G2_SSD/venvs/env_isaaclab
+uv venv --python 3.11 --seed $A2G2_SSD/venvs/env_isaaclab
 source $A2G2_SSD/venvs/env_isaaclab/bin/activate
-pip install torch==2.7.0 --index-url https://download.pytorch.org/whl/cu128
-pip install 'isaacsim[all,extscache]==5.1.0' --extra-index-url https://pypi.nvidia.com
+uv pip install -r requirements/isaaclab.txt
 git clone https://github.com/isaac-sim/IsaacLab.git ~/py_workspace/IsaacLab
-cd ~/py_workspace/IsaacLab && git checkout v2.3.1
-./isaaclab.sh --install rsl_rl
-cd -  # back to this repo
-pip install -e a2g2_tracking/source/a2g2_tracking
+(cd ~/py_workspace/IsaacLab && git checkout v2.3.1 && ./isaaclab.sh --install rsl_rl)
+uv pip install -e a2g2_tracking/source/a2g2_tracking
 ```
 
 ### Models and data
@@ -73,7 +73,7 @@ unzip -o data/MotionCapture.zip -d data/
 
 ```bash
 export A2G2_SSD=/path/to/bulk/storage     # root for weights, work dirs, logs, caches
-export PY_CAPTURE=$HOME/anaconda3/envs/animal/bin/python
+export PY_CAPTURE=$A2G2_SSD/venvs/env_capture/bin/python
 export ANIMER_CKPT=/path/to/AniMer/checkpoint.ckpt
 ```
 

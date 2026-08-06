@@ -1,0 +1,7 @@
+# Built WITHOUT build isolation against packages from capture.txt, so install
+# AFTER it and with --no-build-isolation. detectron2/pytorch3d import torch at
+# build time and need the CUDA toolkit (nvcc) matching torch's CUDA — 12.1;
+# chumpy's ancient setup.py imports pip, which only the real venv has.
+chumpy==0.70
+git+https://github.com/facebookresearch/detectron2.git
+git+https://github.com/facebookresearch/pytorch3d.git@V0.7.8
