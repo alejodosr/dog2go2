@@ -125,6 +125,38 @@ def test_pin_stance_feet_blend_respects_neighbor_stance():
     np.testing.assert_allclose(pinned[14:22, 1] - pinned[14, 1], 0.0)
 
 
+def test_pin_stance_feet_splits_merged_run():
+    """A long stance run with real target travel re-steps instead of holding
+    one pin (the dog_5 failure: relabel merged a footfall sequence into one
+    10 s run and the single pin clamped the calf for 38.6% of frames)."""
+    n = 100
+    foot_world = np.zeros((n, 4, 3))
+    foot_world[:, 0, 0] = np.linspace(0.0, 0.4, n)   # 0.4 m of travel
+    contacts = np.zeros((n, 4), dtype=bool)
+    contacts[:, 0] = True
+    pinned = pp.pin_stance_feet(foot_world, contacts, blend=3, split_min=30)
+    # the pin follows the free target within the split budget (+ glide)
+    err = np.abs(pinned[:, 0, 0] - foot_world[:, 0, 0])
+    assert err.max() < pp.PIN_SPLIT_M + 1e-9
+    # several distinct footfalls, each held constant at ground height
+    pins = np.unique(pinned[:, 0, 0])
+    assert len(pins) > 3
+    np.testing.assert_allclose(pinned[:, 0, 2], pp.FOOT_RADIUS)
+
+
+def test_pin_stance_feet_short_run_never_splits():
+    """Runs at or under split_min keep the single pin no matter the drift —
+    a fast-skating foot in a short relabeled stance (canter) must freeze."""
+    n = 30
+    foot_world = np.zeros((n, 4, 3))
+    foot_world[:, 0, 0] = np.linspace(0.0, 1.0, n)   # violent drift
+    contacts = np.zeros((n, 4), dtype=bool)
+    contacts[5:25, 0] = True
+    pinned = pp.pin_stance_feet(foot_world, contacts, blend=3, split_min=20)
+    stance = pinned[5:25, 0]
+    np.testing.assert_allclose(stance - stance[0], 0.0)
+
+
 def test_relabel_contacts_from_realized_height():
     """Low feet become stance regardless of speed; high feet stay swing."""
     n = 30
@@ -192,9 +224,14 @@ def test_postprocess_end_to_end():
         motion, pp.foot_base_positions(root_pos, rot, foot_world)
     )
 
-    assert report["skate_after"] < 1e-6
+    # FR's 0.12 m of drift inside one 2 s all-stance run exceeds the pin
+    # split budget, so it re-steps once instead of freezing (the run is
+    # longer than MAX_PIN_RUN_S); the other three feet stay exactly pinned.
+    # Skate is therefore small but not zero.
+    assert report["skate_after"] < 0.02
     # FR drifts 0.06 m/s; averaged over the 4 stance feet -> 0.015 m/s.
     assert report["skate_before"] > 0.01
+    assert report["skate_after"] < report["skate_before"]
     assert report["clamp_rate"] < 0.02   # acceptance §10
     # Realized stance feet sit on the ground.
     feet = pp.foot_world_positions(

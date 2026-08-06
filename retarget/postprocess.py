@@ -14,7 +14,11 @@ source-side contacts) and produces clean joint trajectories:
      center sits at the foot-sphere radius (i.e. the sphere touches z=0).
   4. Foot-skate removal: during each stance segment the foot target is
      pinned to its touch-down xy at ground height, blended in/out over a few
-     swing frames to avoid pops.
+     swing frames to avoid pops. Runs no single stance could produce
+     (longer than MAX_PIN_RUN_S with more than PIN_SPLIT_M of target travel
+     — footfall sequences the height-only relabel merged) are split into
+     re-steps instead of held to one pin, which wrapped the leg around the
+     moving trunk until the calf sat at its limit (dog_5: 38.6% clamped).
   5. IK + limit report: solve, clamp to the MJCF limits, report the clamp
      rate (a high rate means the scaling/offsets upstream are wrong).
   6. Contact relabel from the ROBOT's realized (post-IK) foot heights, then
@@ -69,6 +73,25 @@ CONTACT_RELABEL_Z = 0.030
 # an empirically trackable *reference* demand; anything above it here has
 # been an IK artifact, not motion.
 DOF_VEL_CLAMP = 40.0
+# Re-pin a stance foot once its free target has walked this far (m) from the
+# pin. The relabel (step 6) is height-only, so a slow-stepping dog whose swing
+# clearance sits under CONTACT_RELABEL_Z gets its swings relabeled as stance
+# and whole footfall sequences merge into one run (dog_5: RR/RL became single
+# 10 s runs while the trunk yawed ~50 deg; the pinned target ended 0.65 m from
+# the free one, and the calf sat clamped at its straight limit 38.6% of
+# frames). Genuine stances never approach this budget — their free-target
+# drift is skate-sized (<5 cm) — so splitting only fires where a single pin
+# is a lie. 0.08 m is ~0.2 leg lengths, matching world_place_ba's
+# --split-budget reasoning for the identical footfall-merging problem.
+PIN_SPLIT_M = 0.08
+# ... but only in runs no single stance could be (same reasoning as
+# reground.py's REGROUND_MIN_S: quadruped support phases are short). The
+# canter's relabeled stances drift past the budget in <0.2 s — those are the
+# skating feet the relabel+pin exists to freeze, and splitting them turned
+# the pin into a glide (stance skate 0.067 -> 0.380 m/s). Measured split by
+# duration: every footfall-merged run (dog_1/2/5) is >0.5 s, 10 of 12 fast
+# canter drifters are <=0.5 s, and the walk's 0.33-0.43 s stances stay solid.
+MAX_PIN_RUN_S = 0.5
 
 
 def foot_world_positions(root_pos, root_rot, foot_base):
@@ -133,13 +156,23 @@ def ground_align(root_pos, foot_world, contacts):
     return root_pos, foot_world, offset
 
 
-def pin_stance_feet(foot_world, contacts, blend):
+def pin_stance_feet(foot_world, contacts, blend, split=PIN_SPLIT_M,
+                    split_min=None):
     """Remove foot-skate: pin each stance segment to its touch-down point.
 
     During stance the target is (touch-down xy, ground height); the `blend`
     swing frames on either side interpolate between the free target and the
     pin so liftoff/touch-down don't pop. Blending only touches swing frames,
     so neighboring stance segments stay exactly pinned.
+
+    With `split_min` set (frames), a run longer than that whose free target
+    drifts more than `split` from the pin is split into a new footfall there,
+    gliding to the new pin over `blend` frames at ground height (a quick
+    re-step). See PIN_SPLIT_M / MAX_PIN_RUN_S for why both gates: one pin
+    across a footfall sequence the relabel merged does not remove skate, it
+    wraps the leg around the trunk until the IK clamps — but a short
+    fast-drifting run is a skating foot the pin exists to freeze. The default
+    (split_min=None) never splits.
     """
     out = foot_world.copy()
     n = len(out)
@@ -148,20 +181,36 @@ def pin_stance_feet(foot_world, contacts, blend):
         for start, end, val in _runs(stance):
             if not val:
                 continue
-            pin = np.array([*foot_world[start, leg, :2], FOOT_RADIUS])
-            out[start:end, leg] = pin
+            bounds = [start]  # sub-run starts: one per footfall
+            if split_min is not None and end - start > split_min:
+                pin_xy = foot_world[start, leg, :2]
+                for t in range(start + 1, end):
+                    if np.linalg.norm(foot_world[t, leg, :2] - pin_xy) > split:
+                        bounds.append(t)
+                        pin_xy = foot_world[t, leg, :2]
+            bounds.append(end)
+            prev = None
+            for s, e in zip(bounds[:-1], bounds[1:]):
+                pin = np.array([*foot_world[s, leg, :2], FOOT_RADIUS])
+                out[s:e, leg] = pin
+                if prev is not None:  # glide between pins, staying grounded
+                    for k in range(min(blend, e - s)):
+                        w = (k + 1) / (blend + 1)
+                        out[s + k, leg] = (1 - w) * prev + w * pin
+                prev = pin
+            pin_first = np.array([*foot_world[bounds[0], leg, :2], FOOT_RADIUS])
             for k in range(1, blend + 1):  # ease in before touch-down
                 i = start - k
                 if i < 0 or stance[i]:
                     break
                 w = (blend + 1 - k) / (blend + 1)
-                out[i, leg] = w * pin + (1 - w) * foot_world[i, leg]
+                out[i, leg] = w * pin_first + (1 - w) * foot_world[i, leg]
             for k in range(1, blend + 1):  # ease out after liftoff
                 i = end - 1 + k
                 if i >= n or stance[i]:
                     break
                 w = (blend + 1 - k) / (blend + 1)
-                out[i, leg] = w * pin + (1 - w) * foot_world[i, leg]
+                out[i, leg] = w * prev + (1 - w) * foot_world[i, leg]
     return out
 
 
@@ -240,7 +289,8 @@ def postprocess(motion, foot_targets_base):
     )
 
     def solve(contacts):
-        pinned = pin_stance_feet(foot_world, contacts, blend)
+        pinned = pin_stance_feet(foot_world, contacts, blend,
+                                 split_min=round(MAX_PIN_RUN_S * fps))
         pinned[..., 2] = np.maximum(pinned[..., 2], FOOT_RADIUS)  # no swing dips
         dof_pos, violated = ik.clamp_to_limits(
             ik.ik(foot_base_positions(root_pos, rot, pinned))
