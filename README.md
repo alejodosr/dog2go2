@@ -7,40 +7,68 @@ DeepMimic-style PPO policy in Isaac Lab to reproduce it under physics.
 
 <img width="1280" height="720" alt="telegram-cloud-photo-size-4-6028323995846905170-y" src="https://github.com/user-attachments/assets/fa0d1193-f3c5-488b-8e96-fc7b3b77ec3d" />
 
-## ⚡ Quick install
+## ⚡ Install
 
-Requires [uv](https://docs.astral.sh/uv/) and Python ≥ 3.11.
+The pipeline runs on three Python environments. They exchange files (npz and
+pkl) and nothing else, because their dependencies genuinely conflict:
+detectron2 and pytorch3d are compiled against one torch build, Isaac Sim pins
+its own runtime, and the MuJoCo half needs neither.
+
+**1 · The uv project** — retargeting, rendering, unit tests. Requires
+[uv](https://docs.astral.sh/uv/) and Python ≥ 3.11:
 
 ```bash
 git clone <this repo> && cd dog2go2
 uv sync
 ```
 
-That covers the retargeting half (MuJoCo, numpy IK, rendering). Capture and RL
-each need their own environment:
+**2 · The capture environment** — turns video into motion (`capture/`). A
+separate conda env or venv with the torch stack: torch 2.5.1+cu121,
+detectron2, pytorch3d, transformers ≥ 4.45, timm, opencv, matplotlib.
+AniMer's `amr` package is already vendored in this repo, so no AniMer
+checkout is needed. Point `$PY_CAPTURE` at its interpreter (below).
 
-| what | needs | where |
-|---|---|---|
-| `capture/` (video → motion) | torch, detectron2, transformers, pytorch3d + the 8.35 GB [AniMer](https://github.com/luoxue-star/AniMer) checkpoint | `$PY_CAPTURE` interpreter |
-| `a2g2_tracking/` (RL) | Isaac Lab v2.3.1, Isaac Sim 5.1.0 | its own venv |
+**3 · The RL environment** — trains the policy (`a2g2_tracking/`). Its own
+venv with Isaac Lab v2.3.1 on Isaac Sim 5.1.0; the pinned install steps are
+in [a2g2_tracking/README.md](a2g2_tracking/README.md).
+
+### Models and data
+
+| what | size | goes to | how |
+|---|---|---|---|
+| [AniMer](https://github.com/luoxue-star/AniMer) ViT-H checkpoint | 8.35 GB | `$ANIMER_CKPT` | download from the AniMer repo (the 2.7 GB ViT-S variant will be rejected by the loader) |
+| [SMAL](https://smal.is.tue.mpg.de/) model files | 34 MB | `data/smal/` | register on the SMAL site; its license forbids redistribution |
+| Depth Anything V2 (metric, indoor, large) | ~1.3 GB | `$HF_HOME` | automatic on first run |
+| Faster R-CNN COCO detector weights | ~430 MB | detectron2 cache | automatic on first run |
+| AI4Animation dog mocap (only for the mocap path) | ~800 MB | `data/` | `curl` command in [CHANGELOG](CHANGELOG.md#setup) |
+
+### Environment variables
 
 ```bash
-export A2G2_SSD=/path/to/bulk/storage          # data, weights, logs, caches
+export A2G2_SSD=/path/to/bulk/storage     # root for weights, work dirs, logs, caches
 export PY_CAPTURE=$HOME/anaconda3/envs/animal/bin/python
 export ANIMER_CKPT=/path/to/AniMer/checkpoint.ckpt
 ```
 
+`capture/run_default.sh` derives everything else from `$A2G2_SSD` (work dirs,
+`$HF_HOME`, calibration folder); each path can also be overridden
+individually — see `capture/paths.py`.
+
 ## 🏃 Quick run
 
-Video → retargeted Go2 motion, plus a side-by-side video (real dog | Go2 IK):
+Turn a video of a dog into a Go2 motion. This one command runs the whole
+capture-and-retarget pipeline and also writes a side-by-side video — source
+footage on the left, the retargeted Go2 rendered in MuJoCo on the right:
 
 ```bash
 capture/run_default.sh media/dog_3.mp4 dog_3
 # -> motions/dog_3.pkl  +  media/sbs_dog_3.mp4
 ```
 
-Train the tracking policy on it and film the result (reference | policy
-side-by-side):
+Then train the tracking policy on that motion and record it (training takes
+roughly 2–3 hours on an RTX 3090). The resulting video shows the reference
+motion on the left and the learned policy, running under physics, on the
+right:
 
 ```bash
 source $A2G2_SSD/venvs/env_isaaclab/bin/activate
@@ -62,11 +90,13 @@ python a2g2_tracking/scripts/rsl_rl/play.py \
 capture/run_default.sh media/dog_3.mp4 dog_3
 ```
 
-One command, eight stages: per-frame SMAL pose (AniMer) → metric ground plane
-(Depth Anything V2) → foot contacts → bundle-adjusted world placement → npz
-contract → IK retarget → Go2 render → side-by-side video. Watch the
-side-by-side: it is the one artifact that can't lie. Re-running skips any
-stage whose output already exists.
+One command, eight stages. AniMer regresses the dog's SMAL pose per frame,
+Depth Anything V2 fits a metric ground plane, foot contacts are detected, and
+a clip-wide bundle adjustment places the dog in the world. The result is
+written to the npz contract, retargeted onto the Go2 with IK, rendered, and
+composed into the side-by-side video. Watch that video first — it is the one
+artifact that can't lie. Re-running skips any stage whose output already
+exists.
 
 > [!IMPORTANT]
 > **The video must show the floor.** Everything metric comes from the ground
