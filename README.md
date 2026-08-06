@@ -7,21 +7,6 @@ DeepMimic-style PPO policy in Isaac Lab to reproduce it under physics.
 
 <img width="1280" height="720" alt="telegram-cloud-photo-size-4-6028323995846905170-y" src="https://github.com/user-attachments/assets/fa0d1193-f3c5-488b-8e96-fc7b3b77ec3d" />
 
-```mermaid
-flowchart LR
-    V["🎥 video"] --> C["capture/<br>pose · ground · contacts"]
-    B["🦴 BVH mocap"] --> P["processed .npz"]
-    C --> P
-    P --> R["retarget/<br>analytic IK + cleanup"]
-    R --> M["motions/*.pkl"]
-    M --> T["a2g2_tracking/\nPPO in Isaac Lab"]
-    T --> G["🤖 Go2 policy"]
-```
-
-Two entry points — video or BVH mocap — meet at one npz contract, and
-everything downstream is shared. The full engineering log lives in
-[CHANGELOG.md](CHANGELOG.md); training runs in [RESULTS.md](RESULTS.md).
-
 ## ⚡ Quick install
 
 Requires [uv](https://docs.astral.sh/uv/) and Python ≥ 3.11.
@@ -44,10 +29,6 @@ export A2G2_SSD=/path/to/bulk/storage          # data, weights, logs, caches
 export PY_CAPTURE=$HOME/anaconda3/envs/animal/bin/python
 export ANIMER_CKPT=/path/to/AniMer/checkpoint.ckpt
 ```
-
-Setup details: [CHANGELOG](CHANGELOG.md#setup) and
-[a2g2_tracking/README.md](a2g2_tracking/README.md). The Go2 model (MuJoCo
-Menagerie) and AniMer's `amr` package are vendored.
 
 ## 🏃 Quick run
 
