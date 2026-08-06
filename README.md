@@ -94,16 +94,14 @@ One command, eight stages. AniMer regresses the dog's SMAL pose per frame,
 Depth Anything V2 fits a metric ground plane, foot contacts are detected, and
 a clip-wide bundle adjustment places the dog in the world. The result is
 written to the npz contract, retargeted onto the Go2 with IK, rendered, and
-composed into the side-by-side video. Watch that video first — it is the one
-artifact that can't lie. Re-running skips any stage whose output already
+composed into the side-by-side video. Watch that video first, and if you like it, continue. Re-running skips any stage whose output already
 exists.
 
 > [!IMPORTANT]
 > **The video must show the floor.** Everything metric comes from the ground
 > plane: its normal defines *up*, its distance gives the camera height that
-> anchors every metre, and foot contacts are detected against it. No visible
-> floor, no world. AI-generated footage has no real geometry for the depth
-> model to measure — expect its scale to be off by tens of percent.
+> anchors every metre, and foot contacts are detected against it. The camera
+> should be static the whole time.
 
 ### 2 · 🦿 Retarget — motion in, joint trajectories out
 
@@ -145,7 +143,7 @@ the reference preview disambiguates. Follow training with
 
 ## 🧪 Preliminary tests with Mocap
 
-Each layer has a cheap check, runnable in order (the mocap path needs the
+In case you want to test RL learning first from mocap's ground-truth data. Each layer has a cheap check, runnable in order (the mocap path needs the
 AI4Animation dataset, see CHANGELOG):
 
 ```bash
