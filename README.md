@@ -1,12 +1,13 @@
-# dog2go2
+# Dog2go2: Teach a Unitree Go2 to move like a dog, starting from a video of one.
+Dog2go2 is a full pipeline from *footage of a real dog* to a *trained motion
+policy on a quadruped robot*
 
-**Teach a Unitree Go2 to move like a dog — starting from a video of one.**
-
-dog2go2 is a full pipeline from *footage of a real animal* to a *trained motion
-policy on a quadruped robot*: it lifts the dog's 3D pose from monocular video,
+It lifts the dog's 3D pose from monocular video,
 places it in a metric world, retargets the motion onto the Go2 with analytic
 IK, and then trains a DeepMimic-style PPO policy in Isaac Lab to reproduce it
 under real physics.
+
+<img width="1280" height="720" alt="telegram-cloud-photo-size-4-6028323995846905170-y" src="https://github.com/user-attachments/assets/fa0d1193-f3c5-488b-8e96-fc7b3b77ec3d" />
 
 ```mermaid
 flowchart LR
