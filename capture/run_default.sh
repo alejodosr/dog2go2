@@ -73,7 +73,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SSD="${A2G2_SSD:-/media/SHARED_DATA/postcapitalistrobots/a2g2}"
 WORK="${A2G2_WORK:-$SSD/work/capture}"
 CALIB="${A2G2_CALIB:-$WORK/calib_depth}"
-PY_CAPTURE="${PY_CAPTURE:-$HOME/anaconda3/envs/animal/bin/python}"
+PY_CAPTURE="${PY_CAPTURE:-$SSD/venvs/env_capture/bin/python}"   # uv env, see requirements/capture.txt
 PY_DLC="${PY_DLC:-$SSD/venvs/dlcenv/bin/python}"   # optional QA only
 DEPTH_MODEL="${DEPTH_MODEL:-depth-anything/Depth-Anything-V2-Metric-Indoor-Large-hf}"
 export HF_HOME="${HF_HOME:-$SSD/models/hf}"
@@ -90,6 +90,10 @@ cd "$REPO"
 TRIMARG=""
 [ -n "$TRIM" ] && TRIMARG="--trim $TRIM"
 
+# NOTE: the whole PYTHONNOUSERSITE dance below is a CONDA-interpreter problem
+# (conda envs consult ~/.local, venvs do not). With the default uv env
+# (requirements/capture.txt) both runners behave identically; they are kept so
+# a conda PY_CAPTURE keeps working.
 # PYTHONNOUSERSITE is NOT a blanket setting -- the stages disagree about it,
 # and both directions have been observed to fail:
 #   * stage 2 REQUIRES it. ~/.local holds a broken soundfile which transformers

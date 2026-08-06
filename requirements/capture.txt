@@ -27,6 +27,7 @@ scikit-image==0.25.2
 webdataset==1.0.2
 braceexpand==0.1.7
 yacs==0.1.8
+pyrootutils==1.0.4
 pycocotools==2.0.11
 opencv-python==5.0.0.93
 matplotlib==3.10.9
