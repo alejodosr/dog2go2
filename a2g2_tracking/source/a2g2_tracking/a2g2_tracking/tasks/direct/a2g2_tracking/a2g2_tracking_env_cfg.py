@@ -236,3 +236,16 @@ class A2g2TrackingEnvCfg(DirectRLEnvCfg):
     pip_cam_height = 480
     pip_cam_eye_offset = (1.8, 1.8, 0.9)  # m, world-frame offset from tracked root
     pip_cam_lookat_offset = (0.0, 0.0, 0.2)
+    # fixed camera at the SOURCE video's solved pose (play.py --camera-world):
+    # renders the policy from the viewpoint of the footage the motion came
+    # from, so a source|policy side-by-side reads as one scene. Pose is in the
+    # env-origin frame, quat wxyz in the OpenGL/USD convention (+x right,
+    # +y up, -z forward); play.py fills these from viz/source_cam.py.
+    source_camera = False
+    source_cam_pos = (0.0, 0.0, 1.0)
+    source_cam_quat = (1.0, 0.0, 0.0, 0.0)
+    source_cam_width = 832
+    source_cam_height = 480
+    source_cam_focal_length = 24.0  # mm; apertures set the FOV against this
+    source_cam_h_aperture = 20.955
+    source_cam_v_aperture = 12.09

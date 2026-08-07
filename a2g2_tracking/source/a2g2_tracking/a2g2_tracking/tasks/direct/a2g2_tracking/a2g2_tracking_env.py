@@ -185,6 +185,24 @@ class A2g2TrackingEnv(DirectRLEnv):
                 )
                 self.scene.sensors[f"pip_cam_{name}"] = cam
                 self._pip_cams[name] = cam
+        self._source_cam = None
+        if self.cfg.source_camera:
+            cam = Camera(
+                CameraCfg(
+                    prim_path="/World/envs/env_.*/SourceCam",
+                    width=self.cfg.source_cam_width,
+                    height=self.cfg.source_cam_height,
+                    data_types=["rgb"],
+                    spawn=sim_utils.PinholeCameraCfg(
+                        focal_length=self.cfg.source_cam_focal_length,
+                        horizontal_aperture=self.cfg.source_cam_h_aperture,
+                        vertical_aperture=self.cfg.source_cam_v_aperture,
+                        clipping_range=(0.1, 200.0),
+                    ),
+                )
+            )
+            self.scene.sensors["source_cam"] = cam
+            self._source_cam = cam
         self.cfg.terrain.num_envs = self.scene.cfg.num_envs
         self.cfg.terrain.env_spacing = self.scene.cfg.env_spacing
         self._terrain = self.cfg.terrain.class_type(self.cfg.terrain)
@@ -242,6 +260,12 @@ class A2g2TrackingEnv(DirectRLEnv):
                 self._pip_cams[name].set_world_poses_from_view(
                     root_pos + self._pip_cam_eye, root_pos + self._pip_cam_lookat
                 )
+        if self._source_cam is not None:
+            # fixed pose, re-set every step like the pip cams so resets can't
+            # move it
+            pos = torch.tensor(self.cfg.source_cam_pos, device=self.device) + self._terrain.env_origins
+            quat = torch.tensor(self.cfg.source_cam_quat, device=self.device).expand(self.num_envs, 4)
+            self._source_cam.set_world_poses(pos, quat, convention="opengl")
 
     def _apply_action(self):
         if self.cfg.kinematic_replay:

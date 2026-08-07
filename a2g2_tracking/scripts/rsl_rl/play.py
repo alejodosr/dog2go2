@@ -84,6 +84,20 @@ parser.add_argument(
     default=False,
     help="Start every episode at clip frame 0 (film one whole episode start-to-truncation).",
 )
+parser.add_argument(
+    "--camera_world",
+    type=str,
+    default=None,
+    help="Also record from the SOURCE video's solved camera (viz/source_cam.py): "
+    "the clip's <clip>_world.npz. Needs --camera_calib and --motion; writes "
+    "videos/play/source_<clip>.mp4.",
+)
+parser.add_argument(
+    "--camera_calib",
+    type=str,
+    default=None,
+    help="The clip's depth-calibration json (focal_px, img_size).",
+)
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -95,10 +109,10 @@ args_cli, hydra_args = parser.parse_known_args()
 # teleporting the robot. --no_pip / --early_term opt back out.
 if args_cli.video and not args_cli.no_pip:
     args_cli.pip_video = True
-if (args_cli.video or args_cli.pip_video) and not args_cli.early_term:
+if (args_cli.video or args_cli.pip_video or args_cli.camera_world) and not args_cli.early_term:
     args_cli.no_early_term = True
 # always enable cameras to record video
-if args_cli.video or args_cli.pip_video:
+if args_cli.video or args_cli.pip_video or args_cli.camera_world:
     args_cli.enable_cameras = True
 
 # clear out sys.argv for Hydra
@@ -281,6 +295,32 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         env_cfg.ghost_y_offset = args_cli.ghost_y_offset
     elif args_cli.pip_video:
         env_cfg.ghost_y_offset = 3.0
+    if args_cli.camera_world:
+        if not (args_cli.camera_calib and args_cli.motion):
+            raise SystemExit("--camera_world needs --camera_calib and --motion")
+        import pickle
+
+        from scipy.spatial.transform import Rotation
+
+        sys.path.insert(0, _REPO_ROOT)
+        from viz.source_cam import source_camera_pose
+
+        with open(os.path.join(_REPO_ROOT, "motions", f"{args_cli.motion}.pkl"), "rb") as f:
+            _motion = pickle.load(f)
+        _pos, _R, _fovx, _fovy, (_w, _h) = source_camera_pose(
+            args_cli.camera_world, args_cli.camera_calib, _motion
+        )
+        _qx, _qy, _qz, _qw = Rotation.from_matrix(_R).as_quat()
+        env_cfg.source_camera = True
+        env_cfg.source_cam_pos = tuple(float(v) for v in _pos)
+        env_cfg.source_cam_quat = (float(_qw), float(_qx), float(_qy), float(_qz))
+        env_cfg.source_cam_height = 480
+        env_cfg.source_cam_width = int(round(480 * _w / _h)) // 2 * 2
+        _fl = env_cfg.source_cam_focal_length
+        env_cfg.source_cam_h_aperture = 2 * _fl * float(np.tan(np.radians(_fovx / 2)))
+        env_cfg.source_cam_v_aperture = 2 * _fl * float(np.tan(np.radians(_fovy / 2)))
+        if args_cli.num_envs is None:
+            env_cfg.scene.num_envs = 1
     if args_cli.video:
         # follow camera on the robot root (not settable via hydra: asset_name
         # defaults to None and cfg overrides are type-checked against that)
@@ -378,6 +418,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     obs = env.get_observations()
     timestep = 0
     pip_frames: list[np.ndarray] = []
+    src_frames: list[np.ndarray] = []
     # simulate environment
     while simulation_app.is_running():
         start_time = time.time()
@@ -389,14 +430,18 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             obs, _, dones, _ = env.step(actions)
         if args_cli.pip_video:
             pip_frames.append(_pip_frame(env.unwrapped))
-        if args_cli.video or args_cli.pip_video:
+        if args_cli.camera_world:
+            src_frames.append(
+                env.unwrapped._source_cam.data.output["rgb"][0].detach().cpu().numpy()[..., :3]
+            )
+        if args_cli.video or args_cli.pip_video or args_cli.camera_world:
             timestep += 1
             # Exit the play loop after recording one video
             if timestep == args_cli.video_length:
                 break
             # with --start_at_zero the first done closes one whole episode —
             # stop there so the pip video never spans a reset (ghost teleports)
-            if args_cli.pip_video and args_cli.start_at_zero and dones.any():
+            if (args_cli.pip_video or args_cli.camera_world) and args_cli.start_at_zero and dones.any():
                 break
 
         # time delay for real-time evaluation
@@ -414,6 +459,17 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         fps = round(1.0 / dt)
         imageio.mimwrite(pip_path, pip_frames, fps=fps, quality=8)
         print(f"[INFO] Side-by-side video ({len(pip_frames)} frames @ {fps} fps): {pip_path}", flush=True)
+
+    if src_frames:
+        import imageio.v2 as imageio
+
+        clip_tag = args_cli.motion or "mixed"
+        src_dir = os.path.join(log_dir, "videos", "play")
+        os.makedirs(src_dir, exist_ok=True)
+        src_path = os.path.join(src_dir, f"source_{clip_tag}.mp4")
+        fps = round(1.0 / dt)
+        imageio.mimwrite(src_path, src_frames, fps=fps, quality=8)
+        print(f"[INFO] Source-camera video ({len(src_frames)} frames @ {fps} fps): {src_path}", flush=True)
 
     # close the simulator
     env.close()

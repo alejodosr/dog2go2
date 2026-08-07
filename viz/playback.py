@@ -81,25 +81,12 @@ def matched_camera_model(world_npz, calib_json, motion, height):
 
     Returns (model, data, camera_name, render_width).
     """
-    import json
-
     from scipy.spatial.transform import Rotation
 
-    w = np.load(world_npz, allow_pickle=True)
-    cal = json.loads(Path(calib_json).read_text())
-    origin_w = 0.5 * (w["world"][:, 0] + w["world"][:, 1])   # trunk origin, metres
-    s = float(np.median(motion["root_pos"][:, 2]) / np.median(origin_w[:, 2]))
-    t_xy = s * origin_w[0, :2] - motion["root_pos"][0, :2]
+    from viz.source_cam import source_camera_pose
 
-    C = w["camera_pos"]
-    campos = np.array([s * C[0] - t_xy[0], s * C[1] - t_xy[1], s * C[2]])
-    # capture camera: +x right, +y down, +z forward; MuJoCo camera: +x right,
-    # +y up, looks along -z
-    R_mj = np.asarray(w["R_cw"]) @ np.diag([1.0, -1.0, -1.0])
+    campos, R_mj, _, fovy, (W_, H_) = source_camera_pose(world_npz, calib_json, motion)
     qx, qy, qz, qw = Rotation.from_matrix(R_mj).as_quat()
-
-    W_, H_ = cal["img_size"]
-    fovy = float(np.degrees(2.0 * np.arctan(H_ / (2.0 * float(cal["focal_px"])))))
     width = int(round(height * W_ / H_)) // 2 * 2
 
     spec = mujoco.MjSpec.from_file(str(GO2_SCENE_XML))
@@ -112,7 +99,7 @@ def matched_camera_model(world_npz, calib_json, motion, height):
     model.vis.global_.offwidth = max(model.vis.global_.offwidth, width)
     model.vis.global_.offheight = max(model.vis.global_.offheight, height)
     print(f"source camera: pos ({campos[0]:.2f}, {campos[1]:.2f}, {campos[2]:.2f}) "
-          f"fovy {fovy:.1f} deg  scale {s:.3f}  render {width}x{height}")
+          f"fovy {fovy:.1f} deg  render {width}x{height}")
     return model, mujoco.MjData(model), "source_cam", width
 
 
