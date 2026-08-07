@@ -1,4 +1,4 @@
-# Dog2go2: Teach a Unitree Go2 to move like a dog, from just pure monocular videos.
+# Dog2go2: Using Monocular Videos to Teach a Unitree Go2 robot.
 
 Dog2go2 turns monocular footage of a real dog into a trained motion policy on
 a Unitree Go2. It lifts the dog's 3D pose from video, places it in a metric
