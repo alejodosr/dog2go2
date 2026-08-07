@@ -7,6 +7,10 @@ DeepMimic-style PPO policy in Isaac Lab to reproduce it under physics.
 
 <img width="1280" height="720" alt="do2go2" src="https://github.com/user-attachments/assets/7a8d9432-7955-49d2-b706-f99b495b6a69" />
 
+## Video Examples
+
+https://github.com/user-attachments/assets/d0ef4e11-17cb-4c9d-8e76-7a74dc4ab268
+
 ## ⚡ Install
 
 ### Environment variables
