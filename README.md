@@ -1,4 +1,4 @@
-# Dog2go2: Teach a Unitree Go2 to move like a dog, starting from a video of one.
+# Dog2go2: Using Monocular Videos to Teach a Unitree Go2 robot.
 
 Dog2go2 turns monocular footage of a real dog into a trained motion policy on
 a Unitree Go2. It lifts the dog's 3D pose from video, places it in a metric
@@ -6,6 +6,10 @@ world, retargets the motion onto the robot with analytic IK, and trains a
 DeepMimic-style PPO policy in Isaac Lab to reproduce it under physics.
 
 <img width="1280" height="720" alt="do2go2" src="https://github.com/user-attachments/assets/7a8d9432-7955-49d2-b706-f99b495b6a69" />
+
+## Video Examples
+
+https://github.com/user-attachments/assets/d0ef4e11-17cb-4c9d-8e76-7a74dc4ab268
 
 ## ⚡ Install
 
